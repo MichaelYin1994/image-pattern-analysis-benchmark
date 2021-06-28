@@ -19,7 +19,7 @@ if __name__ == '__main__':
     col_names = ['sub_date', 'val_score', 'online_score', "description"]
     score_list = [['2021-06-26 02:56:56', 0.22, 0.08785, '第一次正常提交分数，没有采用任何数据增强方法。'],
                   ['2021-06-26 22:50:24', 0.332, 0.11234, '在第一次提交的基础上，在小水管上多跑了一些轮次'],
-                  ['2021-06-28 13:04:24', 0.455, 0.10672, 'validation与train高度过拟合，testing预测似乎是无效的，准备换一个网络试试']]
+                  ['2021-06-28 18:26:24', 0.7028, 0.13996, '采用ImageNet预训练的EfficentNet做训练，发现了Bug所在之处：train与val划分有Bug']]
 
     # 分数数据预处理
     df = pd.DataFrame(score_list, columns=col_names)

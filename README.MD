@@ -1,4 +1,4 @@
-## ICCV 2021 Meituan Large Fine Food AI Workshop
+## IFLYTEK 2021 科大讯飞广告素材图片分类
 
 ---
 ### **队伍简介**

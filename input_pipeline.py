@@ -123,13 +123,13 @@ def build_model(verbose=False, is_compile=True, **kwargs):
     model.add(tf.keras.layers.GlobalAveragePooling2D())
     model.add(tf.keras.layers.Flatten())
     model.add(tf.keras.layers.Dense(
-        256, 
+        256,
         activation='relu', 
         bias_regularizer=tf.keras.regularizers.L1L2(l1=0.01, l2=0.001)
     ))
     model.add(tf.keras.layers.Dropout(0.5))
     model.add(tf.keras.layers.Dense(n_classes, activation='softmax'))
-    
+
     # 编译模型
     # ---------------------
     if verbose:
@@ -163,7 +163,7 @@ if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
     IMAGE_SIZE = (224, 224)
-    BATCH_SIZE = 32
+    BATCH_SIZE = 64
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 10
     MODEL_NAME = 'EfficientNetB3_quadrop5000'
@@ -187,7 +187,7 @@ if __name__ == '__main__':
         TRAIN_PATH,
         label_mode='categorical',
         shuffle=True,
-        validation_split=0.8,
+        validation_split=0.2,
         subset="training",
         seed=GLOBAL_RANDOM_SEED,
         image_size=IMAGE_SIZE,
