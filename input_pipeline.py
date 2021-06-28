@@ -9,9 +9,10 @@
 本模块(input_pipeline.py)构建数据读取与预处理的pipline，并训练神经网络模型。
 '''
 
-import os
 import multiprocessing as mp
+import os
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -19,6 +20,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import Model, layers
 from tensorflow.keras.optimizers import Adam
+from tqdm import tqdm
 
 from dingtalk_remote_monitor import RemoteMonitorDingTalk
 from models import build_model_resnet50_v2, build_model_resnet101_v2
@@ -164,12 +166,12 @@ if __name__ == '__main__':
     # ---------------------
     IMAGE_SIZE = (224, 224)
     BATCH_SIZE = 64
-    NUM_EPOCHS = 128
+    NUM_EPOCHS = 0
     EARLY_STOP_ROUNDS = 10
     MODEL_NAME = 'EfficientNetB3_quadrop5000'
     CKPT_PATH = './ckpt/{}/'.format(MODEL_NAME)
 
-    IS_TRAIN_FROM_CKPT = False
+    IS_TRAIN_FROM_CKPT = True
     IS_SEND_MSG_TO_DINGTALK = True
     IS_DEBUG = False
 
@@ -203,18 +205,6 @@ if __name__ == '__main__':
         image_size=IMAGE_SIZE,
         batch_size=BATCH_SIZE
     )
-
-    train_ds = train_ds.prefetch(buffer_size=int(BATCH_SIZE * 2))
-    val_ds = val_ds.prefetch(buffer_size=int(BATCH_SIZE * 2))
-
-    # plt.figure(figsize=(10, 10))
-    # for images, labels in train_ds.take(1):
-    #     for i in range(9):
-    #         ax = plt.subplot(3, 3, i + 1)
-    #         plt.imshow(images[i].numpy().astype('uint8'))
-    #         plt.title(int(labels[i]))
-    #         plt.axis('off')
-    # plt.tight_layout()
 
     # 构造与编译Model，并添加各种callback
     # ---------------------
@@ -283,6 +273,15 @@ if __name__ == '__main__':
     test_file_name_list = sorted(test_file_name_list, key=lambda x: int(x.split('.')[0][1:]))
     test_file_fullname_list = [TEST_PATH + item for item in test_file_name_list]
 
+    pred_label_list = []
+    load_preprocess_test_image = load_preprocess_image(image_size=IMAGE_SIZE)
+    for img_name in tqdm(test_file_fullname_list):
+        image = load_preprocess_test_image(img_name)
+        image = tf.expand_dims(image, axis=0)
+        proba = model.predict(image)
+        pred_label_list.append(np.argmax(proba))
+
+    '''
     test_path_ds = tf.data.Dataset.from_tensor_slices(test_file_fullname_list)
     load_preprocess_test_image = load_preprocess_image(image_size=IMAGE_SIZE)
     test_ds = test_path_ds.map(
@@ -291,14 +290,14 @@ if __name__ == '__main__':
     )
     test_ds = test_ds.batch(BATCH_SIZE)
     test_ds = test_ds.prefetch(buffer_size=int(BATCH_SIZE * 2))
-
     test_pred_proba = model.predict(test_ds)
+    '''
 
     test_pred_df = pd.DataFrame(
         test_file_name_list,
         columns=['image_id']
     )
-    test_pred_df['category_id'] = np.argmax(test_pred_proba, axis=1)
+    test_pred_df['category_id'] = pred_label_list
 
     # test_sub_df = pd.read_csv('./data/submit_sample.csv')
     test_pred_df.to_csv('./submissions/sub.csv', index=False)
