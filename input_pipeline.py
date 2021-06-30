@@ -24,7 +24,7 @@ from tqdm import tqdm
 from dingtalk_remote_monitor import RemoteMonitorDingTalk
 from models import build_model_resnet50_v2, build_model_resnet101_v2
 
-GLOBAL_RANDOM_SEED = 192
+GLOBAL_RANDOM_SEED = 65535
 np.random.seed(GLOBAL_RANDOM_SEED)
 tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
@@ -165,12 +165,12 @@ if __name__ == '__main__':
     # ---------------------
     IMAGE_SIZE = (224, 224)
     BATCH_SIZE = 64
-    NUM_EPOCHS = 0
+    NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 10
     MODEL_NAME = 'EfficientNetB3_quadrop5000'
     CKPT_PATH = './ckpt/{}/'.format(MODEL_NAME)
 
-    IS_TRAIN_FROM_CKPT = True
+    IS_TRAIN_FROM_CKPT = False
     IS_SEND_MSG_TO_DINGTALK = True
     IS_DEBUG = False
 
@@ -279,38 +279,12 @@ if __name__ == '__main__':
         callbacks=callbacks
     )
 
-    # 生成Validation预测结果，并进行Top-1 Accuracy评估
-    # ---------------------
-    true_label_list, pred_label_list = [], []
-    for images, labels in val_ds:
-        pred_labels = model.predict(images)
-        pred_labels = np.argmax(pred_labels, axis=1)
-        true_labels = np.argmax(labels, axis=1)
-
-        true_label_list.extend(true_labels.tolist())
-        pred_label_list.extend(pred_labels.tolist())
-
-    true_label_array = np.array(true_label_list)
-    pred_label_array = np.array(pred_label_list)
-
-    print(np.sum(true_label_array == pred_label_array) / len(true_label_array))
-
-    """
-    # 生成预测结果
+    # 生成Test预测结果，并进行Top-1 Accuracy评估
     # ---------------------
     test_file_name_list = os.listdir(TEST_PATH)
     test_file_name_list = sorted(test_file_name_list, key=lambda x: int(x.split('.')[0][1:]))
     test_file_fullname_list = [TEST_PATH + item for item in test_file_name_list]
 
-    pred_label_list = []
-    load_preprocess_test_image = load_preprocess_image(image_size=IMAGE_SIZE)
-    for img_name in tqdm(test_file_fullname_list):
-        image = load_preprocess_test_image(img_name)
-        image = tf.expand_dims(image, axis=0)
-        proba = model.predict(image)
-        pred_label_list.append(np.argmax(proba))
-
-    '''
     test_path_ds = tf.data.Dataset.from_tensor_slices(test_file_fullname_list)
     load_preprocess_test_image = load_preprocess_image(image_size=IMAGE_SIZE)
     test_ds = test_path_ds.map(
@@ -319,14 +293,14 @@ if __name__ == '__main__':
     )
     test_ds = test_ds.batch(BATCH_SIZE)
     test_ds = test_ds.prefetch(buffer_size=int(BATCH_SIZE * 2))
+
     test_pred_proba = model.predict(test_ds)
-    '''
+    test_pred_label_list = np.argmax(test_pred_proba, axis=1)
 
     test_pred_df = pd.DataFrame(
         test_file_name_list,
         columns=['image_id']
     )
-    test_pred_df['category_id'] = pred_label_list
+    test_pred_df['category_id'] = test_pred_label_list
 
     test_pred_df.to_csv('./submissions/sub.csv', index=False)
-    """
