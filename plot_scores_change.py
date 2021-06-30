@@ -20,7 +20,8 @@ if __name__ == '__main__':
     score_list = [['2021-06-26 02:56:56', 0.22, 0.08785, '第一次正常提交分数，没有采用任何数据增强方法。'],
                   ['2021-06-26 22:50:24', 0.332, 0.11234, '在第一次提交的基础上，在小水管上多跑了一些轮次'],
                   ['2021-06-28 18:26:24', 0.7028, 0.13996, '采用ImageNet预训练的EfficentNet做训练，发现了Bug所在之处：train与val划分有Bug'],
-                  ['2021-06-26 22:50:24', 0.7755, 0.14729, '把validation与train的比例做对了，猜测testing的预测顺序有问题'],]
+                  ['2021-06-28 22:50:24', 0.7755, 0.14729, '把validation与train的比例做对了，猜测testing的预测顺序有问题'],
+                  ['2021-06-29 09:57:24', 0.820, 0.15197, '需要再次check预测程序'],]
 
     # 分数数据预处理
     df = pd.DataFrame(score_list, columns=col_names)
@@ -36,7 +37,7 @@ if __name__ == '__main__':
 
     ax.grid(True)
     # ax.set_xlim(0.6, )
-    ax.set_ylim(0, )
+    ax.set_ylim(0, 1)
     ax.set_xlabel("Date", fontsize=10)
     ax.set_ylabel("Top-1 Accuracy", fontsize=10)
     ax.tick_params(axis="both", labelsize=10)

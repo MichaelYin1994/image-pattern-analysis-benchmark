@@ -139,8 +139,8 @@ def build_model(verbose=False, is_compile=True, **kwargs):
 
     if is_compile:
         model.compile(
-            loss='binary_crossentropy',
-            optimizer=Adam(0.001),
+            loss='categorical_crossentropy',
+            optimizer=Adam(0.0005),
             metrics=['acc'])
 
     return model
@@ -183,7 +183,7 @@ if __name__ == '__main__':
         TEST_PATH = './data/test/'
     N_CLASSES = len(os.listdir(TRAIN_PATH))
 
-    # 利用tensorflow的preprocessing方法读取数据集
+    # 利用tensorflow的preprocessing方法读取数据集 
     # ---------------------
     train_ds = tf.keras.preprocessing.image_dataset_from_directory(
         TRAIN_PATH,
@@ -299,5 +299,4 @@ if __name__ == '__main__':
     )
     test_pred_df['category_id'] = pred_label_list
 
-    # test_sub_df = pd.read_csv('./data/submit_sample.csv')
     test_pred_df.to_csv('./submissions/sub.csv', index=False)
