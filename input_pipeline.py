@@ -12,7 +12,6 @@
 import multiprocessing as mp
 import os
 
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -206,6 +205,19 @@ if __name__ == '__main__':
         batch_size=BATCH_SIZE
     )
 
+    # 随机可视化几张图片
+    IS_RANDOM_VISUALIZING_PLOTS = False
+
+    if IS_RANDOM_VISUALIZING_PLOTS:
+        plt.figure(figsize=(10, 10))
+        for images, labels in train_ds.take(1):
+            for i in range(9):
+                ax = plt.subplot(3, 3, i + 1)
+                plt.imshow(images[i].numpy().astype('uint8'))
+                plt.title(int(labels[i]))
+                plt.axis('off')
+        plt.tight_layout()
+
     # 构造与编译Model，并添加各种callback
     # ---------------------
 
@@ -267,6 +279,23 @@ if __name__ == '__main__':
         callbacks=callbacks
     )
 
+    # 生成Validation预测结果，并进行Top-1 Accuracy评估
+    # ---------------------
+    true_label_list, pred_label_list = [], []
+    for images, labels in val_ds:
+        pred_labels = model.predict(images)
+        pred_labels = np.argmax(pred_labels, axis=1)
+        true_labels = np.argmax(labels, axis=1)
+
+        true_label_list.extend(true_labels.tolist())
+        pred_label_list.extend(pred_labels.tolist())
+
+    true_label_array = np.array(true_label_list)
+    pred_label_array = np.array(pred_label_list)
+
+    print(np.sum(true_label_array == pred_label_array) / len(true_label_array))
+
+    """
     # 生成预测结果
     # ---------------------
     test_file_name_list = os.listdir(TEST_PATH)
@@ -300,3 +329,4 @@ if __name__ == '__main__':
     test_pred_df['category_id'] = pred_label_list
 
     test_pred_df.to_csv('./submissions/sub.csv', index=False)
+    """
