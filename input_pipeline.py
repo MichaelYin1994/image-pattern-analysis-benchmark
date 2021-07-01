@@ -20,6 +20,8 @@ from tensorflow import keras
 from tensorflow.keras import Model, layers
 from tensorflow.keras.optimizers import Adam
 from tqdm import tqdm
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import OneHotEncoder
 
 from dingtalk_remote_monitor import RemoteMonitorDingTalk
 from models import build_model_resnet50_v2, build_model_resnet101_v2
@@ -164,14 +166,14 @@ if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
     IMAGE_SIZE = (224, 224)
-    BATCH_SIZE = 64
+    BATCH_SIZE = 32
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 10
     MODEL_NAME = 'EfficientNetB3_quadrop5000'
     CKPT_PATH = './ckpt/{}/'.format(MODEL_NAME)
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = True
+    IS_SEND_MSG_TO_DINGTALK = False
     IS_DEBUG = False
 
     if IS_DEBUG:
@@ -184,26 +186,49 @@ if __name__ == '__main__':
 
     # 利用tensorflow的preprocessing方法读取数据集 
     # ---------------------
-    train_ds = tf.keras.preprocessing.image_dataset_from_directory(
-        TRAIN_PATH,
-        label_mode='categorical',
-        shuffle=True,
-        validation_split=0.2,
-        subset="training",
-        seed=GLOBAL_RANDOM_SEED,
-        image_size=IMAGE_SIZE,
-        batch_size=BATCH_SIZE
+    train_file_full_name_list = []
+    train_label_list = []
+    for dir_name in os.listdir(TRAIN_PATH):
+        full_path_name = os.path.join(TRAIN_PATH, dir_name)
+        for file_name in os.listdir(full_path_name):
+            train_file_full_name_list.append(
+                os.path.join(full_path_name, file_name)
+            )
+            train_label_list.append(int(dir_name))
+    train_label_oht_array = np.array(train_label_list)
+
+    encoder = OneHotEncoder(sparse=False)
+    train_label_oht_array = encoder.fit_transform(
+        train_label_oht_array.reshape(-1, 1))
+
+    X_train, X_val, y_train, y_val = train_test_split(
+        train_file_full_name_list, train_label_oht_array,
+        train_size=0.8, random_state=GLOBAL_RANDOM_SEED,
     )
-    val_ds = tf.keras.preprocessing.image_dataset_from_directory(
-        TRAIN_PATH,
-        label_mode='categorical',
-        shuffle=True,
-        subset="validation",
-        validation_split=0.2,
-        seed=GLOBAL_RANDOM_SEED,
-        image_size=IMAGE_SIZE,
-        batch_size=BATCH_SIZE
+
+    # Construct training dataset
+    load_preprocess_train_image = load_preprocess_image(image_size=IMAGE_SIZE)
+
+    train_path_ds = tf.data.Dataset.from_tensor_slices(X_train)
+    train_img_ds = train_path_ds.map(
+        load_preprocess_train_image, num_parallel_calls=mp.cpu_count()
     )
+    train_label_ds = tf.data.Dataset.from_tensor_slices(y_train)
+
+    train_ds = tf.data.Dataset.zip((train_img_ds, train_label_ds))
+
+    # Construct validation dataset
+    val_path_ds = tf.data.Dataset.from_tensor_slices(X_val)
+    val_img_ds = train_path_ds.map(
+        load_preprocess_train_image, num_parallel_calls=mp.cpu_count()
+    )
+    val_label_ds = tf.data.Dataset.from_tensor_slices(y_val)
+
+    val_ds = tf.data.Dataset.zip((val_img_ds, val_label_ds))
+
+    # Performance
+    train_ds = train_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    val_ds = val_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
 
     # 随机可视化几张图片
     IS_RANDOM_VISUALIZING_PLOTS = False
@@ -239,7 +264,7 @@ if __name__ == '__main__':
         tf.keras.callbacks.ReduceLROnPlateau(
                 monitor='val_acc',
                 factor=0.5,
-                patience=3,
+                patience=2,
                 min_lr=0.0000003),
         RemoteMonitorDingTalk(
             is_send_msg=IS_SEND_MSG_TO_DINGTALK,
