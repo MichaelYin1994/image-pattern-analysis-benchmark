@@ -174,7 +174,7 @@ if __name__ == '__main__':
 
     IS_TRAIN_FROM_CKPT = False
     IS_SEND_MSG_TO_DINGTALK = False
-    IS_DEBUG = False
+    IS_DEBUG = True
 
     if IS_DEBUG:
         TRAIN_PATH = './data/train_debug/'
@@ -219,7 +219,7 @@ if __name__ == '__main__':
 
     # Construct validation dataset
     val_path_ds = tf.data.Dataset.from_tensor_slices(X_val)
-    val_img_ds = train_path_ds.map(
+    val_img_ds = val_path_ds.map(
         load_preprocess_train_image, num_parallel_calls=mp.cpu_count()
     )
     val_label_ds = tf.data.Dataset.from_tensor_slices(y_val)
