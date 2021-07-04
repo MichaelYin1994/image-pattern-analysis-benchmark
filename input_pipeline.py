@@ -16,21 +16,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import Model, layers
-from tensorflow.keras.optimizers import Adam
-from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder
+from tensorflow import keras
+from tensorflow.keras import Model
+from tensorflow.keras import backend as K
+from tensorflow.keras import layers
+from tensorflow.keras.optimizers import Adam
+from tqdm import tqdm
 
 from dingtalk_remote_monitor import RemoteMonitorDingTalk
 from models import build_model_resnet50_v2, build_model_resnet101_v2
 
-GLOBAL_RANDOM_SEED = 65535
+GLOBAL_RANDOM_SEED = 7555
 np.random.seed(GLOBAL_RANDOM_SEED)
 tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
-GPU_ID = 0
+TASK_NAME = 'iflytek_2021'
+GPU_ID = 1
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -197,19 +200,142 @@ def load_preprocess_test_image(image_size=None):
     return load_img
 
 
+class LearningRateWarmUpCosineDecayScheduler(tf.keras.callbacks.Callback):
+    '''
+    带有Learning Rate的Warmup与Cosine自调节的Learning Rate回调类，主要参考
+    文献[1]与文献[2]。
+
+    @Args:
+    ----------
+    learning_rate_base: {float-like}
+        基础的学习率。
+    total_steps: {int-like}
+    global_steps_initial: {int-like}
+    warmup_learning_rate: {int-like}
+    warmup_steps: {bool-like}
+    hold_steps: {str-like}
+
+    @References:
+    ----------
+    [1] https://www.dlology.com/blog/bag-of-tricks-for-image-classification-with-convolutional-neural-networks-in-keras/?t=162513696863
+    [2] He, Tong, et al. "Bag of tricks for image classification with convolutional neural networks." Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 2019.
+
+    @Returns:
+    ----------
+    None，通过callback方法对Model的学习率进行设置。
+    '''
+    def __init__(self,
+                 learning_rate_base,
+                 total_steps,
+                 global_steps_initial=0,
+                 warmup_learning_rate=0.0,
+                 warmup_steps=0,
+                 hold_steps=0):
+        super(LearningRateWarmUpCosineDecayScheduler, self).__init__()
+        self.learning_rate_base = learning_rate_base
+        self.warmup_learning_rate = warmup_learning_rate
+
+        self.total_steps = total_steps
+        self.current_step = global_steps_initial
+        self.warmup_steps = warmup_steps
+        self.hold_steps = hold_steps
+
+        self.history_learning_rates = []
+
+    def learning_rate_cosine_decay_with_hold(
+        self,
+        current_step,
+        learning_rate_base,
+        total_steps,
+        warmup_learning_rate=0.0,
+        warmup_steps=0,
+        hold_base_rate_steps=0):
+        '''
+        带有warmup功能与learning rate holding功能的learning_rate生成方法。
+
+        @Args:
+        ----------
+        current_step: {float-like}
+            当前全局的训练的step数目。
+        learning_rate_base: {float-like}
+            基础的学习率，在warmup后保持hold_steps步数。
+        total_steps: {int-like}
+            总的step的数目，取值为n_epoch * n_batches_per_epoch。
+        warmup_learning_rate: {float-like}
+            初始warmup的学习率大小，一般取0。
+        warmup_steps: {bool-like}
+            warmup的步数。
+        hold_steps: {str-like}
+            学习率保持(hold)的步数。
+
+        @Return:
+        ----------
+        调节好的学习率。
+        '''
+        # 修复文献[1]学习率santity check的bug
+        if total_steps < (warmup_steps + hold_base_rate_steps):
+            raise ValueError('total_steps must be larger',
+                             'or equal to warmup_steps + hold_base_rate_steps.')
+
+        if warmup_learning_rate > learning_rate_base:
+            raise ValueError('warmup learning rate must be larger',
+                             'than base learning rate.')
+
+        # 公式来源：文献[2]
+        learning_rate = 0.5 * learning_rate_base * \
+            (1 + np.cos(np.pi * (current_step - warmup_steps - hold_base_rate_steps) \
+            / (total_steps - warmup_steps - hold_base_rate_steps)))
+
+        # 若当前step小于warmup_steps，计算并设置为warmup学习率
+        if warmup_steps > 0 and current_step < warmup_steps:
+            slope = (learning_rate_base - warmup_learning_rate) / warmup_steps
+            current_warmup_rate = slope * current_step + warmup_learning_rate
+            learning_rate = current_warmup_rate
+
+        # 若是warmup结束，并且需要hold学习率，则设置为需要hold的学习率
+        if hold_base_rate_steps > 0 and \
+            current_step < (warmup_steps + hold_base_rate_steps) and \
+            current_step > warmup_steps:
+            learning_rate = learning_rate_base
+
+        return learning_rate
+
+    def on_batch_end(self, batch, logs=None):
+        self.current_step = self.current_step + 1
+        learning_rate = K.get_value(self.model.optimizer.lr)
+        self.history_learning_rates.append(learning_rate)
+
+    def on_batch_begin(self, batch, logs=None):
+        learning_rate = self.learning_rate_cosine_decay_with_hold(
+            current_step=self.current_step,
+            learning_rate_base=self.learning_rate_base,
+            total_steps=self.total_steps,
+            warmup_learning_rate=self.warmup_learning_rate,
+            warmup_steps=self.warmup_steps,
+            hold_base_rate_steps=self.hold_steps
+        )
+
+        K.set_value(self.model.optimizer.lr, learning_rate)
+        print('step {}: setting learning rate {:.7f}'.format(
+            self.current_step + 1, learning_rate
+        ))
+
+
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (512, 512)
+    IMAGE_SIZE = (224, 224)
     BATCH_SIZE = 32
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 10
     MODEL_NAME = 'EfficientNetB3_rtx3090'
-    CKPT_PATH = './ckpt/{}/'.format(MODEL_NAME)
+
+    CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
+    CKPT_DIR = './ckpt/'
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = True
-    IS_DEBUG = False
+    IS_SEND_MSG_TO_DINGTALK = False
+    IS_DEBUG = True
 
     if IS_DEBUG:
         TRAIN_PATH = './data/train_debug/'
@@ -242,6 +368,8 @@ if __name__ == '__main__':
         train_file_full_name_list, train_label_oht_array,
         train_size=0.8, random_state=GLOBAL_RANDOM_SEED,
     )
+
+    n_train_samples, n_valid_samples = len(X_train), len(X_val)
 
     # 构造训练数据集的pipline
     load_preprocess_train_image = load_preprocess_image(image_size=IMAGE_SIZE)
@@ -294,21 +422,28 @@ if __name__ == '__main__':
             restore_best_weights=True),
         tf.keras.callbacks.ModelCheckpoint(
             filepath=os.path.join(
-                CKPT_PATH,
+                CKPT_DIR + CKPT_FOLD_NAME,
                 MODEL_NAME + '_epoch_{epoch:02d}_valacc_{val_acc:.3f}.ckpt'),
             monitor='val_acc',
             mode='max',
             save_weights_only=True,
             save_best_only=True),
-        tf.keras.callbacks.ReduceLROnPlateau(
-                monitor='val_acc',
-                factor=0.5,
-                patience=2,
-                min_lr=0.0000003),
+        # tf.keras.callbacks.ReduceLROnPlateau(
+        #         monitor='val_acc',
+        #         factor=0.5,
+        #         patience=2,
+        #         min_lr=0.0000003),
         RemoteMonitorDingTalk(
             is_send_msg=IS_SEND_MSG_TO_DINGTALK,
             model_name=MODEL_NAME,
-            gpu_id=GPU_ID)
+            gpu_id=GPU_ID),
+        LearningRateWarmUpCosineDecayScheduler(
+            learning_rate_base=0.0002,
+            total_steps=int(n_train_samples * NUM_EPOCHS / BATCH_SIZE),
+            global_steps_initial=0,
+            warmup_learning_rate=0.0000001,
+            warmup_steps=int(n_train_samples * 5 / BATCH_SIZE),
+            hold_steps=int(n_train_samples * 2 / BATCH_SIZE))
     ]
 
     # 训练模型
@@ -319,20 +454,20 @@ if __name__ == '__main__':
     )
 
     # 如果模型名的ckpt文件夹不存在，创建该文件夹
-    if MODEL_NAME not in os.listdir('./ckpt'):
-        os.mkdir('./ckpt/' + MODEL_NAME)
+    if CKPT_FOLD_NAME not in os.listdir(CKPT_DIR):
+        os.mkdir(CKPT_DIR + CKPT_FOLD_NAME)
 
     # 如果指定ckpt weights文件名，则从ckpt位置开始训练
     if IS_TRAIN_FROM_CKPT:
-        latest_ckpt = tf.train.latest_checkpoint(CKPT_PATH)
+        latest_ckpt = tf.train.latest_checkpoint(CKPT_DIR + CKPT_FOLD_NAME)
         model.load_weights(latest_ckpt)
     else:
-        ckpt_file_name_list = os.listdir(CKPT_PATH)
+        ckpt_file_name_list = os.listdir(CKPT_DIR + CKPT_FOLD_NAME)
 
         # https://www.geeksforgeeks.org/python-os-remove-method/
         try:
             for file_name in ckpt_file_name_list:
-                os.remove(os.path.join(CKPT_PATH, file_name))
+                os.remove(os.path.join(CKPT_DIR + CKPT_FOLD_NAME, file_name))
         except OSError:
             print('File {} can not be deleted !'.format(file_name))
 
@@ -367,5 +502,5 @@ if __name__ == '__main__':
     )
     test_pred_df['category_id'] = test_pred_label_list
 
-    sub_file_name = str(len(os.list_dir(./submissions))) + '_sub.csv'
+    sub_file_name = str(len(os.list_dir('./submissions'))) + '_sub.csv'
     test_pred_df.to_csv(sub_file_name, index=False)
