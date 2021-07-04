@@ -162,19 +162,54 @@ def load_preprocess_image(image_size=None):
     return fcn
 
 
+def load_preprocess_train_image(image_size=None):
+    '''通过闭包实现参数化的训练集的Image loading。'''
+
+    def load_img(path=None):
+        image = tf.io.read_file(path)
+        image = tf.cond(
+            tf.image.is_jpeg(image),
+            lambda: tf.image.decode_jpeg(image, channels=3),
+            lambda: tf.image.decode_gif(image)[0])
+
+        image = tf.image.random_brightness(image, 0.3)
+        image = tf.image.random_flip_left_right(image)
+        image = tf.image.random_flip_up_down(image)
+
+        image = tf.image.resize(image, image_size)
+        return image
+
+    return load_img
+
+
+def load_preprocess_test_image(image_size=None):
+    '''通过闭包实现参数化的测试集的Image loading。'''
+
+    def load_img(path=None):
+        image = tf.io.read_file(path)
+        image = tf.cond(
+            tf.image.is_jpeg(image),
+            lambda: tf.image.decode_jpeg(image, channels=3),
+            lambda: tf.image.decode_gif(image)[0])
+        image = tf.image.resize(image, image_size)
+
+        return image
+    return load_img
+
+
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (224, 224)
+    IMAGE_SIZE = (512, 512)
     BATCH_SIZE = 32
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 10
-    MODEL_NAME = 'EfficientNetB3_quadrop5000'
+    MODEL_NAME = 'EfficientNetB3_rtx3090'
     CKPT_PATH = './ckpt/{}/'.format(MODEL_NAME)
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = False
-    IS_DEBUG = True
+    IS_SEND_MSG_TO_DINGTALK = True
+    IS_DEBUG = False
 
     if IS_DEBUG:
         TRAIN_PATH = './data/train_debug/'
@@ -197,17 +232,20 @@ if __name__ == '__main__':
             train_label_list.append(int(dir_name))
     train_label_oht_array = np.array(train_label_list)
 
+    # 编码训练标签
     encoder = OneHotEncoder(sparse=False)
     train_label_oht_array = encoder.fit_transform(
         train_label_oht_array.reshape(-1, 1))
 
+    # 按照比例划分Train与Validation
     X_train, X_val, y_train, y_val = train_test_split(
         train_file_full_name_list, train_label_oht_array,
         train_size=0.8, random_state=GLOBAL_RANDOM_SEED,
     )
 
-    # Construct training dataset
+    # 构造训练数据集的pipline
     load_preprocess_train_image = load_preprocess_image(image_size=IMAGE_SIZE)
+    load_preprocess_valid_image = load_preprocess_image(image_size=IMAGE_SIZE)
 
     train_path_ds = tf.data.Dataset.from_tensor_slices(X_train)
     train_img_ds = train_path_ds.map(
@@ -217,16 +255,17 @@ if __name__ == '__main__':
 
     train_ds = tf.data.Dataset.zip((train_img_ds, train_label_ds))
 
-    # Construct validation dataset
+    # 构造validation数据集的pipline
     val_path_ds = tf.data.Dataset.from_tensor_slices(X_val)
     val_img_ds = val_path_ds.map(
-        load_preprocess_train_image, num_parallel_calls=mp.cpu_count()
+        load_preprocess_valid_image, num_parallel_calls=mp.cpu_count()
     )
     val_label_ds = tf.data.Dataset.from_tensor_slices(y_val)
 
     val_ds = tf.data.Dataset.zip((val_img_ds, val_label_ds))
 
     # Performance
+    # train_ds = train_ds.shuffle(buffer_size=int(32 * BATCH_SIZE))
     train_ds = train_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
     val_ds = val_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
 
@@ -328,4 +367,5 @@ if __name__ == '__main__':
     )
     test_pred_df['category_id'] = test_pred_label_list
 
-    test_pred_df.to_csv('./submissions/sub.csv', index=False)
+    sub_file_name = str(len(os.list_dir(./submissions))) + '_sub.csv'
+    test_pred_df.to_csv(sub_file_name, index=False)
