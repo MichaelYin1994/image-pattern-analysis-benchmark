@@ -14,6 +14,7 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+from numpy.lib.npyio import load
 import pandas as pd
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
@@ -33,7 +34,7 @@ np.random.seed(GLOBAL_RANDOM_SEED)
 tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
 TASK_NAME = 'iflytek_2021'
-GPU_ID = 1
+GPU_ID = 0
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -50,67 +51,8 @@ if gpus:
         print(e)
 # ----------------------------------------------------------------------------
 
-"""
 def build_model(verbose=False, is_compile=True, **kwargs):
     '''构造preprocessing与model的pipline，并返回编译过的模型。'''
-    network_type = kwargs.pop('network_type', 'resnet50')
-
-    # 解析preprocessing与model的参数
-    # ---------------------
-    input_shape = kwargs.pop('input_shape', (None, 224, 224))
-    n_classes = kwargs.pop('n_classes', 1000)
-
-    # 构造data input与preprocessing的pipline
-    # ---------------------
-    layer_input = keras.Input(shape=input_shape, name='layer_input')
-
-    layer_data_augmentation = keras.Sequential(
-        [
-            layers.experimental.preprocessing.RandomFlip('horizontal'),
-            layers.experimental.preprocessing.RandomRotation(0.2),
-        ])
-    layer_input_aug = layer_data_augmentation(layer_input)
-    layer_input_aug = layers.experimental.preprocessing.Rescaling(
-        1 / 255)(layer_input_aug)
-
-    # 构造Model的pipline
-    # ---------------------
-    if 'resnet50' in network_type: 
-        x = build_model_resnet50_v2(layer_input_aug)
-    elif 'resnet101' in network_type:
-        x = build_model_resnet101_v2(layer_input_aug)
-
-    x = layers.GlobalAveragePooling2D()(x)
-    if n_classes == 2:
-        activation = 'sigmoid'
-        units = 1
-    else:
-        activation = 'softmax'
-        units = n_classes
-
-    x = layers.Dropout(0.5)(x)
-    layer_output = layers.Dense(units, activation=activation)(x)
-
-    # 编译模型
-    # ---------------------
-    model = Model(layer_input, layer_output)
-
-    if verbose:
-        model.summary()
-
-    if is_compile:
-        model.compile(
-            loss='binary_crossentropy',
-            optimizer=Adam(0.001),
-            metrics=['acc'])
-
-    return model
-"""
-
-def build_model(verbose=False, is_compile=True, **kwargs):
-    '''构造preprocessing与model的pipline，并返回编译过的模型。'''
-    # network_type = kwargs.pop('network_type', 'resnet50')
-
     # 解析preprocessing与model的参数
     # ---------------------
     input_shape = kwargs.pop('input_shape', (None, 224, 224))
@@ -148,21 +90,6 @@ def build_model(verbose=False, is_compile=True, **kwargs):
             metrics=['acc'])
 
     return model
-
-
-def load_preprocess_image(image_size=None):
-    '''通过闭包实现参数化的Image loading。'''
-
-    def fcn(path=None):
-        image = tf.io.read_file(path)
-        image = tf.cond(
-            tf.image.is_jpeg(image),
-            lambda: tf.image.decode_jpeg(image, channels=3),
-            lambda: tf.image.decode_gif(image)[0])
-        image = tf.image.resize(image, image_size)
-
-        return image
-    return fcn
 
 
 def load_preprocess_train_image(image_size=None):
@@ -210,10 +137,15 @@ class LearningRateWarmUpCosineDecayScheduler(tf.keras.callbacks.Callback):
     learning_rate_base: {float-like}
         基础的学习率。
     total_steps: {int-like}
+        总共的训练的step的数目，#Steps = #Epochs * #Images / Batch_size。
     global_steps_initial: {int-like}
+        当使用ckpt训练的时候，初始的step的数目。
     warmup_learning_rate: {int-like}
+        初始的warmup学习率，一般取0。
     warmup_steps: {bool-like}
+        采用的warmup的steps的数目。
     hold_steps: {str-like}
+        保持learning_rate_base的steps数目。
 
     @References:
     ----------
@@ -316,27 +248,27 @@ class LearningRateWarmUpCosineDecayScheduler(tf.keras.callbacks.Callback):
         )
 
         K.set_value(self.model.optimizer.lr, learning_rate)
-        print('step {}: setting learning rate {:.7f}'.format(
-            self.current_step + 1, learning_rate
-        ))
 
 
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (224, 224)
-    BATCH_SIZE = 32
+    IMAGE_SIZE = (512, 512)
+    BATCH_SIZE = 16
     NUM_EPOCHS = 128
-    EARLY_STOP_ROUNDS = 10
+    NUM_WARMUP_EPOCHS = 6
+    NUM_HOLD_EPOCHS = 5
+    EARLY_STOP_ROUNDS = 6
     MODEL_NAME = 'EfficientNetB3_rtx3090'
 
-    CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
     CKPT_DIR = './ckpt/'
+    CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = False
-    IS_DEBUG = True
+    IS_SEND_MSG_TO_DINGTALK = True
+    IS_DEBUG = False
 
+    # 数据loading的path
     if IS_DEBUG:
         TRAIN_PATH = './data/train_debug/'
         TEST_PATH = './data/test_debug/'
@@ -372,12 +304,12 @@ if __name__ == '__main__':
     n_train_samples, n_valid_samples = len(X_train), len(X_val)
 
     # 构造训练数据集的pipline
-    load_preprocess_train_image = load_preprocess_image(image_size=IMAGE_SIZE)
-    load_preprocess_valid_image = load_preprocess_image(image_size=IMAGE_SIZE)
+    processor_train_image = load_preprocess_train_image(image_size=IMAGE_SIZE)
+    processor_valid_image = load_preprocess_test_image(image_size=IMAGE_SIZE)
 
     train_path_ds = tf.data.Dataset.from_tensor_slices(X_train)
     train_img_ds = train_path_ds.map(
-        load_preprocess_train_image, num_parallel_calls=mp.cpu_count()
+        processor_train_image, num_parallel_calls=mp.cpu_count()
     )
     train_label_ds = tf.data.Dataset.from_tensor_slices(y_train)
 
@@ -386,7 +318,7 @@ if __name__ == '__main__':
     # 构造validation数据集的pipline
     val_path_ds = tf.data.Dataset.from_tensor_slices(X_val)
     val_img_ds = val_path_ds.map(
-        load_preprocess_valid_image, num_parallel_calls=mp.cpu_count()
+        processor_valid_image, num_parallel_calls=mp.cpu_count()
     )
     val_label_ds = tf.data.Dataset.from_tensor_slices(y_val)
 
@@ -414,7 +346,6 @@ if __name__ == '__main__':
     # ---------------------
 
     # 各种Callbacks
-    # ckpt, lr schule, early stop, warm up, remote moniter
     callbacks = [
         tf.keras.callbacks.EarlyStopping(
             monitor='val_acc', mode="max",
@@ -438,12 +369,12 @@ if __name__ == '__main__':
             model_name=MODEL_NAME,
             gpu_id=GPU_ID),
         LearningRateWarmUpCosineDecayScheduler(
-            learning_rate_base=0.0002,
+            learning_rate_base=0.0003,
             total_steps=int(n_train_samples * NUM_EPOCHS / BATCH_SIZE),
             global_steps_initial=0,
             warmup_learning_rate=0.0000001,
-            warmup_steps=int(n_train_samples * 5 / BATCH_SIZE),
-            hold_steps=int(n_train_samples * 2 / BATCH_SIZE))
+            warmup_steps=int(n_train_samples * NUM_WARMUP_EPOCHS / BATCH_SIZE),
+            hold_steps=int(n_train_samples * NUM_HOLD_EPOCHS / BATCH_SIZE))
     ]
 
     # 训练模型
@@ -485,9 +416,9 @@ if __name__ == '__main__':
     test_file_fullname_list = [TEST_PATH + item for item in test_file_name_list]
 
     test_path_ds = tf.data.Dataset.from_tensor_slices(test_file_fullname_list)
-    load_preprocess_test_image = load_preprocess_image(image_size=IMAGE_SIZE)
+    processor_test_image = load_preprocess_test_image(image_size=IMAGE_SIZE)
     test_ds = test_path_ds.map(
-        load_preprocess_test_image,
+        processor_test_image,
         num_parallel_calls=mp.cpu_count()
     )
     test_ds = test_ds.batch(BATCH_SIZE)
