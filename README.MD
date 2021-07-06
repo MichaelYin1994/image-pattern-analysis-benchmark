@@ -39,3 +39,10 @@
 - **./ckpt/**：模型训练权重checkpoint存储位置。
 - **./cached_data/**：用于存储预处理后的临时数据，后续用于存储tfrecord形式的数据，加速IO过程。
 - **./submissions/**：用于存储模型预测的测试集待提交的submissions结果。
+
+---
+### **服务器传输命令**
+
+scp -P 6001 root@172.51.216.152:/home/yinzhuo_host_files/iflytek-digital-marketing/submissions/sub.csv /home/zhuoyin94/Desktop/iflytek-digital-marketing/submissions/
+
+

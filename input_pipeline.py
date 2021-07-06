@@ -14,7 +14,6 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
-from numpy.lib.npyio import load
 import pandas as pd
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
@@ -26,6 +25,7 @@ from tensorflow.keras import layers
 from tensorflow.keras.optimizers import Adam
 from tqdm import tqdm
 
+from utils import LearningRateWarmUpCosineDecayScheduler
 from dingtalk_remote_monitor import RemoteMonitorDingTalk
 from models import build_model_resnet50_v2, build_model_resnet101_v2
 
@@ -51,8 +51,9 @@ if gpus:
         print(e)
 # ----------------------------------------------------------------------------
 
-def build_model(verbose=False, is_compile=True, **kwargs):
-    '''构造preprocessing与model的pipline，并返回编译过的模型。'''
+def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
+    '''构造基于imagenet预训练的ResNetV2的模型，并返回编译过的模型。'''
+
     # 解析preprocessing与model的参数
     # ---------------------
     input_shape = kwargs.pop('input_shape', (None, 224, 224))
@@ -65,9 +66,51 @@ def build_model(verbose=False, is_compile=True, **kwargs):
             input_shape=input_shape, 
             include_top=False,
             weights='imagenet',
-            drop_connect_rate=0.6,
+            drop_connect_rate=0.4,
         )
     )
+    model.add(tf.keras.layers.GlobalAveragePooling2D())
+    model.add(tf.keras.layers.Flatten())
+    model.add(tf.keras.layers.Dense(
+        256,
+        activation='relu', 
+        bias_regularizer=tf.keras.regularizers.L1L2(l1=0.01, l2=0.001)
+    ))
+    model.add(tf.keras.layers.Dropout(0.5))
+    model.add(tf.keras.layers.Dense(n_classes, activation='softmax'))
+
+    # 编译模型
+    # ---------------------
+    if verbose:
+        model.summary()
+
+    if is_compile:
+        model.compile(
+            loss='categorical_crossentropy',
+            optimizer=Adam(0.0005),
+            metrics=['acc'])
+
+    return model
+
+
+def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
+    '''构造preprocessing与model的pipline，并返回编译过的模型。'''
+
+    # 解析preprocessing与model的参数
+    # ---------------------
+    input_shape = kwargs.pop('input_shape', (None, 224, 224))
+    n_classes = kwargs.pop('n_classes', 1000)
+
+    model = tf.keras.Sequential()
+    # initialize the model with input shape
+    model.add(
+        tf.keras.applications.ResNet101V2(
+            input_shape=input_shape, 
+            include_top=False,
+            weights='imagenet',
+        )
+    )
+
     model.add(tf.keras.layers.GlobalAveragePooling2D())
     model.add(tf.keras.layers.Flatten())
     model.add(tf.keras.layers.Dense(
@@ -102,10 +145,11 @@ def load_preprocess_train_image(image_size=None):
             lambda: tf.image.decode_jpeg(image, channels=3),
             lambda: tf.image.decode_gif(image)[0])
 
-        image = tf.image.random_brightness(image, 0.3)
+        image = tf.image.random_brightness(image, 0.2)
         image = tf.image.random_flip_left_right(image)
         image = tf.image.random_flip_up_down(image)
 
+        image = keras.layers.experimental.preprocessing.Rescaling(1./255)(image)
         image = tf.image.resize(image, image_size)
         return image
 
@@ -121,133 +165,12 @@ def load_preprocess_test_image(image_size=None):
             tf.image.is_jpeg(image),
             lambda: tf.image.decode_jpeg(image, channels=3),
             lambda: tf.image.decode_gif(image)[0])
+
+        image = keras.layers.experimental.preprocessing.Rescaling(1./255)(image)
         image = tf.image.resize(image, image_size)
-
         return image
+
     return load_img
-
-
-class LearningRateWarmUpCosineDecayScheduler(tf.keras.callbacks.Callback):
-    '''
-    带有Learning Rate的Warmup与Cosine自调节的Learning Rate回调类，主要参考
-    文献[1]与文献[2]。
-
-    @Args:
-    ----------
-    learning_rate_base: {float-like}
-        基础的学习率。
-    total_steps: {int-like}
-        总共的训练的step的数目，#Steps = #Epochs * #Images / Batch_size。
-    global_steps_initial: {int-like}
-        当使用ckpt训练的时候，初始的step的数目。
-    warmup_learning_rate: {int-like}
-        初始的warmup学习率，一般取0。
-    warmup_steps: {bool-like}
-        采用的warmup的steps的数目。
-    hold_steps: {str-like}
-        保持learning_rate_base的steps数目。
-
-    @References:
-    ----------
-    [1] https://www.dlology.com/blog/bag-of-tricks-for-image-classification-with-convolutional-neural-networks-in-keras/?t=162513696863
-    [2] He, Tong, et al. "Bag of tricks for image classification with convolutional neural networks." Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 2019.
-
-    @Returns:
-    ----------
-    None，通过callback方法对Model的学习率进行设置。
-    '''
-    def __init__(self,
-                 learning_rate_base,
-                 total_steps,
-                 global_steps_initial=0,
-                 warmup_learning_rate=0.0,
-                 warmup_steps=0,
-                 hold_steps=0):
-        super(LearningRateWarmUpCosineDecayScheduler, self).__init__()
-        self.learning_rate_base = learning_rate_base
-        self.warmup_learning_rate = warmup_learning_rate
-
-        self.total_steps = total_steps
-        self.current_step = global_steps_initial
-        self.warmup_steps = warmup_steps
-        self.hold_steps = hold_steps
-
-        self.history_learning_rates = []
-
-    def learning_rate_cosine_decay_with_hold(
-        self,
-        current_step,
-        learning_rate_base,
-        total_steps,
-        warmup_learning_rate=0.0,
-        warmup_steps=0,
-        hold_base_rate_steps=0):
-        '''
-        带有warmup功能与learning rate holding功能的learning_rate生成方法。
-
-        @Args:
-        ----------
-        current_step: {float-like}
-            当前全局的训练的step数目。
-        learning_rate_base: {float-like}
-            基础的学习率，在warmup后保持hold_steps步数。
-        total_steps: {int-like}
-            总的step的数目，取值为n_epoch * n_batches_per_epoch。
-        warmup_learning_rate: {float-like}
-            初始warmup的学习率大小，一般取0。
-        warmup_steps: {bool-like}
-            warmup的步数。
-        hold_steps: {str-like}
-            学习率保持(hold)的步数。
-
-        @Return:
-        ----------
-        调节好的学习率。
-        '''
-        # 修复文献[1]学习率santity check的bug
-        if total_steps < (warmup_steps + hold_base_rate_steps):
-            raise ValueError('total_steps must be larger',
-                             'or equal to warmup_steps + hold_base_rate_steps.')
-
-        if warmup_learning_rate > learning_rate_base:
-            raise ValueError('warmup learning rate must be larger',
-                             'than base learning rate.')
-
-        # 公式来源：文献[2]
-        learning_rate = 0.5 * learning_rate_base * \
-            (1 + np.cos(np.pi * (current_step - warmup_steps - hold_base_rate_steps) \
-            / (total_steps - warmup_steps - hold_base_rate_steps)))
-
-        # 若当前step小于warmup_steps，计算并设置为warmup学习率
-        if warmup_steps > 0 and current_step < warmup_steps:
-            slope = (learning_rate_base - warmup_learning_rate) / warmup_steps
-            current_warmup_rate = slope * current_step + warmup_learning_rate
-            learning_rate = current_warmup_rate
-
-        # 若是warmup结束，并且需要hold学习率，则设置为需要hold的学习率
-        if hold_base_rate_steps > 0 and \
-            current_step < (warmup_steps + hold_base_rate_steps) and \
-            current_step > warmup_steps:
-            learning_rate = learning_rate_base
-
-        return learning_rate
-
-    def on_batch_end(self, batch, logs=None):
-        self.current_step = self.current_step + 1
-        learning_rate = K.get_value(self.model.optimizer.lr)
-        self.history_learning_rates.append(learning_rate)
-
-    def on_batch_begin(self, batch, logs=None):
-        learning_rate = self.learning_rate_cosine_decay_with_hold(
-            current_step=self.current_step,
-            learning_rate_base=self.learning_rate_base,
-            total_steps=self.total_steps,
-            warmup_learning_rate=self.warmup_learning_rate,
-            warmup_steps=self.warmup_steps,
-            hold_base_rate_steps=self.hold_steps
-        )
-
-        K.set_value(self.model.optimizer.lr, learning_rate)
 
 
 if __name__ == '__main__':
@@ -256,17 +179,17 @@ if __name__ == '__main__':
     IMAGE_SIZE = (512, 512)
     BATCH_SIZE = 16
     NUM_EPOCHS = 128
-    NUM_WARMUP_EPOCHS = 6
-    NUM_HOLD_EPOCHS = 5
-    EARLY_STOP_ROUNDS = 6
-    MODEL_NAME = 'EfficientNetB3_rtx3090'
+    # NUM_WARMUP_EPOCHS = 6
+    # NUM_HOLD_EPOCHS = 5
+    EARLY_STOP_ROUNDS = 10
+    MODEL_NAME = 'RetNet101V2_rtx3090'
 
     CKPT_DIR = './ckpt/'
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = True
-    IS_DEBUG = False
+    IS_SEND_MSG_TO_DINGTALK = False
+    IS_DEBUG = True
 
     # 数据loading的path
     if IS_DEBUG:
@@ -359,26 +282,26 @@ if __name__ == '__main__':
             mode='max',
             save_weights_only=True,
             save_best_only=True),
-        # tf.keras.callbacks.ReduceLROnPlateau(
-        #         monitor='val_acc',
-        #         factor=0.5,
-        #         patience=2,
-        #         min_lr=0.0000003),
+        tf.keras.callbacks.ReduceLROnPlateau(
+                monitor='val_acc',
+                factor=0.3,
+                patience=3,
+                min_lr=0.000003),
         RemoteMonitorDingTalk(
             is_send_msg=IS_SEND_MSG_TO_DINGTALK,
             model_name=MODEL_NAME,
             gpu_id=GPU_ID),
-        LearningRateWarmUpCosineDecayScheduler(
-            learning_rate_base=0.0003,
-            total_steps=int(n_train_samples * NUM_EPOCHS / BATCH_SIZE),
-            global_steps_initial=0,
-            warmup_learning_rate=0.0000001,
-            warmup_steps=int(n_train_samples * NUM_WARMUP_EPOCHS / BATCH_SIZE),
-            hold_steps=int(n_train_samples * NUM_HOLD_EPOCHS / BATCH_SIZE))
+        # LearningRateWarmUpCosineDecayScheduler(
+        #     learning_rate_base=0.0003,
+        #     total_steps=int(n_train_samples * NUM_EPOCHS / BATCH_SIZE),
+        #     global_steps_initial=0,
+        #     warmup_learning_rate=0.0000001,
+        #     warmup_steps=int(n_train_samples * NUM_WARMUP_EPOCHS / BATCH_SIZE),
+        #     hold_steps=int(n_train_samples * NUM_HOLD_EPOCHS / BATCH_SIZE))
     ]
 
     # 训练模型
-    model = build_model(
+    model = build_resnetv2_model(
         n_classes=N_CLASSES,
         input_shape=IMAGE_SIZE + (3,),
         network_type=MODEL_NAME
@@ -433,5 +356,5 @@ if __name__ == '__main__':
     )
     test_pred_df['category_id'] = test_pred_label_list
 
-    sub_file_name = str(len(os.list_dir('./submissions'))) + '_sub.csv'
-    test_pred_df.to_csv(sub_file_name, index=False)
+    sub_file_name = str(len(os.listdir('./submissions'))) + '_sub.csv'
+    test_pred_df.to_csv('./submissions/{}'.format(sub_file_name), index=False)
