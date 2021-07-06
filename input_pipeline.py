@@ -200,7 +200,7 @@ if __name__ == '__main__':
         TEST_PATH = './data/test/'
     N_CLASSES = len(os.listdir(TRAIN_PATH))
 
-    # 利用tensorflow的preprocessing方法读取数据集 
+    # 利用tensorflow的preprocessing方法读取数据集
     # ---------------------
     train_file_full_name_list = []
     train_label_list = []
@@ -289,7 +289,7 @@ if __name__ == '__main__':
                 min_lr=0.000003),
         RemoteMonitorDingTalk(
             is_send_msg=IS_SEND_MSG_TO_DINGTALK,
-            model_name=MODEL_NAME,
+            model_name=CKPT_FOLD_NAME,
             gpu_id=GPU_ID),
         # LearningRateWarmUpCosineDecayScheduler(
         #     learning_rate_base=0.0003,
