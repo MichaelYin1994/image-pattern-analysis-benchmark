@@ -34,7 +34,7 @@ np.random.seed(GLOBAL_RANDOM_SEED)
 tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
 TASK_NAME = 'iflytek_2021'
-GPU_ID = 0
+GPU_ID = 1
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -49,6 +49,7 @@ if gpus:
         # print(len(gpus), 'Physical GPUs,', len(logical_gpus), 'Logical GPUs')
     except RuntimeError as e:
         print(e)
+
 # ----------------------------------------------------------------------------
 
 def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
@@ -62,7 +63,7 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     model = tf.keras.Sequential()
     # initialize the model with input shape
     model.add(
-        tf.keras.applications.EfficientNetB3(
+        tf.keras.applications.EfficientNetB5(
             input_shape=input_shape, 
             include_top=False,
             weights='imagenet',
@@ -86,7 +87,7 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
 
     if is_compile:
         model.compile(
-            loss='categorical_crossentropy',
+            loss=tf.keras.losses.CategoricalCrossentropy(),
             optimizer=Adam(0.0005),
             metrics=['acc'])
 
@@ -149,7 +150,7 @@ def load_preprocess_train_image(image_size=None):
         image = tf.image.random_flip_left_right(image)
         image = tf.image.random_flip_up_down(image)
 
-        image = keras.layers.experimental.preprocessing.Rescaling(1./255)(image)
+        # image = keras.layers.experimental.preprocessing.Rescaling(1./255)(image)
         image = tf.image.resize(image, image_size)
         return image
 
@@ -166,30 +167,54 @@ def load_preprocess_test_image(image_size=None):
             lambda: tf.image.decode_jpeg(image, channels=3),
             lambda: tf.image.decode_gif(image)[0])
 
-        image = keras.layers.experimental.preprocessing.Rescaling(1./255)(image)
+        # image = keras.layers.experimental.preprocessing.Rescaling(1./255)(image)
         image = tf.image.resize(image, image_size)
         return image
 
     return load_img
 
 
+def sample_beta_distribution(size, concentration_0=0.2, concentration_1=0.2):
+    gamma_1_sample = tf.random.gamma(shape=[size], alpha=concentration_1)
+    gamma_2_sample = tf.random.gamma(shape=[size], alpha=concentration_0)
+    return gamma_1_sample / (gamma_1_sample + gamma_2_sample)
+
+
+def mix_up(ds_one, ds_two, alpha=0.2):
+    # Unpack two datasets
+    images_one, labels_one = ds_one
+    images_two, labels_two = ds_two
+    batch_size = tf.shape(images_one)[0]
+
+    # Sample lambda and reshape it to do the mixup
+    l = sample_beta_distribution(batch_size, alpha, alpha)
+    x_l = tf.reshape(l, (batch_size, 1, 1, 1))
+    y_l = tf.reshape(l, (batch_size, 1))
+
+    # Perform mixup on both images and labels by combining a pair of images/labels
+    # (one from each dataset) into one image/label
+    images = images_one * x_l + images_two * (1 - x_l)
+    labels = labels_one * y_l + labels_two * (1 - y_l)
+    return (images, labels)
+
+
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
     IMAGE_SIZE = (512, 512)
-    BATCH_SIZE = 16
+    BATCH_SIZE = 10
     NUM_EPOCHS = 128
     # NUM_WARMUP_EPOCHS = 6
     # NUM_HOLD_EPOCHS = 5
-    EARLY_STOP_ROUNDS = 10
-    MODEL_NAME = 'RetNet101V2_rtx3090'
+    EARLY_STOP_ROUNDS = 5
+    MODEL_NAME = 'EfficentNetB5_rtx3090'
 
     CKPT_DIR = './ckpt/'
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = False
-    IS_DEBUG = True
+    IS_SEND_MSG_TO_DINGTALK = True
+    IS_DEBUG = False
 
     # 数据loading的path
     if IS_DEBUG:
@@ -216,7 +241,7 @@ if __name__ == '__main__':
     # 编码训练标签
     encoder = OneHotEncoder(sparse=False)
     train_label_oht_array = encoder.fit_transform(
-        train_label_oht_array.reshape(-1, 1))
+        train_label_oht_array.reshape(-1, 1)).astype(np.float32)
 
     # 按照比例划分Train与Validation
     X_train, X_val, y_train, y_val = train_test_split(
@@ -226,19 +251,28 @@ if __name__ == '__main__':
 
     n_train_samples, n_valid_samples = len(X_train), len(X_val)
 
-    # 构造训练数据集的pipline
+    # 构造训练数据集的pipline, 尝试使用Mixup进行数据增强
+    # 参考Keras Mixup tutorial(https://keras.io/examples/vision/mixup/)
+    # ************
     processor_train_image = load_preprocess_train_image(image_size=IMAGE_SIZE)
-    processor_valid_image = load_preprocess_test_image(image_size=IMAGE_SIZE)
 
     train_path_ds = tf.data.Dataset.from_tensor_slices(X_train)
-    train_img_ds = train_path_ds.map(
+    train_img_ds_x = train_path_ds.map(
         processor_train_image, num_parallel_calls=mp.cpu_count()
     )
-    train_label_ds = tf.data.Dataset.from_tensor_slices(y_train)
+    train_img_ds_y = train_path_ds.map(
+        processor_train_image, num_parallel_calls=mp.cpu_count()
+    )
+    train_label_ds_x = tf.data.Dataset.from_tensor_slices(y_train)
+    train_label_ds_y = tf.data.Dataset.from_tensor_slices(y_train)
 
-    train_ds = tf.data.Dataset.zip((train_img_ds, train_label_ds))
+    train_ds_x = tf.data.Dataset.zip((train_img_ds_x, train_label_ds_x))
+    train_ds_y = tf.data.Dataset.zip((train_img_ds_y, train_label_ds_y))
 
     # 构造validation数据集的pipline
+    # ************
+    processor_valid_image = load_preprocess_test_image(image_size=IMAGE_SIZE)
+
     val_path_ds = tf.data.Dataset.from_tensor_slices(X_val)
     val_img_ds = val_path_ds.map(
         processor_valid_image, num_parallel_calls=mp.cpu_count()
@@ -249,19 +283,29 @@ if __name__ == '__main__':
 
     # Performance
     # train_ds = train_ds.shuffle(buffer_size=int(32 * BATCH_SIZE))
-    train_ds = train_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    train_ds_x = train_ds_x.shuffle(
+        BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    train_ds_y = train_ds_y.shuffle(
+        BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    train_ds = tf.data.Dataset.zip((train_ds_x, train_ds_y))
+    train_ds_mu = train_ds.map(
+        lambda ds_one, ds_two: mix_up(ds_one, ds_two, alpha=0.2),
+        num_parallel_calls=mp.cpu_count()
+    )
+
     val_ds = val_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
 
     # 随机可视化几张图片
-    IS_RANDOM_VISUALIZING_PLOTS = False
+    # ************
+    IS_RANDOM_VISUALIZING_PLOTS = True
 
     if IS_RANDOM_VISUALIZING_PLOTS:
         plt.figure(figsize=(10, 10))
-        for images, labels in train_ds.take(1):
+        for images, labels in train_ds_mu.take(1):
             for i in range(9):
                 ax = plt.subplot(3, 3, i + 1)
                 plt.imshow(images[i].numpy().astype('uint8'))
-                plt.title(int(labels[i]))
+                # plt.title(int(labels[i]))
                 plt.axis('off')
         plt.tight_layout()
 
@@ -284,7 +328,7 @@ if __name__ == '__main__':
             save_best_only=True),
         tf.keras.callbacks.ReduceLROnPlateau(
                 monitor='val_acc',
-                factor=0.3,
+                factor=0.5,
                 patience=3,
                 min_lr=0.000003),
         RemoteMonitorDingTalk(
@@ -301,7 +345,7 @@ if __name__ == '__main__':
     ]
 
     # 训练模型
-    model = build_resnetv2_model(
+    model = build_efficentnet_model(
         n_classes=N_CLASSES,
         input_shape=IMAGE_SIZE + (3,),
         network_type=MODEL_NAME

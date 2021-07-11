@@ -23,15 +23,17 @@ if __name__ == '__main__':
                   ['2021-06-28 22:50:24', 0.7755, 0.14729, '把validation与train的比例做对了，猜测testing的预测顺序有问题'],
                   ['2021-06-29 09:57:24', 0.820, 0.15197, '需要再次check预测程序'],
                   ['2021-07-02 14:23:00', 0.829, 0.8335, '修复了标签loading的bug，采用EfficentNetB3作为base，224*224输入'],
-                  ['2021-07-02 14:23:00', 0.835, 0.82696, '采用cosine学习率与简单数据增强，效果似乎不如ReduceLROnPlateau好']]
+                  ['2021-07-04 14:23:00', 0.835, 0.82696, '采用cosine学习率与简单数据增强，效果似乎不如ReduceLROnPlateau好'],
+                  ['2021-07-09 14:23:00', 0.854, 0.85973, '采用更大的EfficentNetB5预训练模型']]
 
     # 分数数据预处理
     df = pd.DataFrame(score_list, columns=col_names)
     df['sub_date'] = pd.to_datetime(df['sub_date'])
+    df = df.query('online_score > 0.8').reset_index(drop=True)
 
     # 分数随时间变化图
     # ---------------------
-    fig, ax = plt.subplots(figsize=(10, 4))
+    fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(df['val_score'].values, linestyle="--", marker="s", color="k",
             linewidth=2, markersize=4.5, label='validation')
     ax.plot(df['online_score'].values, linestyle="-", marker="o", color="b",
@@ -39,7 +41,7 @@ if __name__ == '__main__':
 
     ax.grid(True)
     # ax.set_xlim(0.6, )
-    ax.set_ylim(0, 1)
+    ax.set_ylim(0.8, 0.95)
     ax.set_xlabel("Date", fontsize=10)
     ax.set_ylabel("Top-1 Accuracy", fontsize=10)
     ax.tick_params(axis="both", labelsize=10)
