@@ -34,7 +34,7 @@ np.random.seed(GLOBAL_RANDOM_SEED)
 tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
 TASK_NAME = 'iflytek_2021'
-GPU_ID = 1
+GPU_ID = 0
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -60,10 +60,33 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     input_shape = kwargs.pop('input_shape', (None, 224, 224))
     n_classes = kwargs.pop('n_classes', 1000)
 
+    model_name = kwargs.pop('model_name', 'EfficentNetB0')
+    model_lr = kwargs.pop('model_lr', 0.01)
+    model_label_smoothing = kwargs.pop('model_label_smoothing', 0.1)
+
+    # 依据关键字，构建模型
+    # ---------------------
     model = tf.keras.Sequential()
-    # initialize the model with input shape
+
+    if 'B0' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB0
+    elif 'B1' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB1
+    elif 'B2' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB2
+    elif 'B3' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB3
+    elif 'B4' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB4
+    elif 'B5' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB5
+    elif 'B6' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB6
+    elif 'B7' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB7
+
     model.add(
-        tf.keras.applications.EfficientNetB5(
+        model_tmp(
             input_shape=input_shape, 
             include_top=False,
             weights='imagenet',
@@ -73,9 +96,7 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     model.add(tf.keras.layers.GlobalAveragePooling2D())
     model.add(tf.keras.layers.Flatten())
     model.add(tf.keras.layers.Dense(
-        256,
-        activation='relu', 
-        bias_regularizer=tf.keras.regularizers.L1L2(l1=0.01, l2=0.001)
+        256, activation='relu',
     ))
     model.add(tf.keras.layers.Dropout(0.5))
     model.add(tf.keras.layers.Dense(n_classes, activation='softmax'))
@@ -87,11 +108,16 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
 
     if is_compile:
         model.compile(
-            loss=tf.keras.losses.CategoricalCrossentropy(),
-            optimizer=Adam(0.0005),
+            loss=tf.keras.losses.CategoricalCrossentropy(
+                label_smoothing=model_label_smoothing),
+            optimizer=Adam(model_lr),
             metrics=['acc'])
 
     return model
+
+
+def build_resnext_model():
+    pass
 
 
 def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
@@ -146,11 +172,10 @@ def load_preprocess_train_image(image_size=None):
             lambda: tf.image.decode_jpeg(image, channels=3),
             lambda: tf.image.decode_gif(image)[0])
 
-        image = tf.image.random_brightness(image, 0.2)
+        image = tf.image.random_brightness(image, 0.3)
         image = tf.image.random_flip_left_right(image)
         image = tf.image.random_flip_up_down(image)
 
-        # image = keras.layers.experimental.preprocessing.Rescaling(1./255)(image)
         image = tf.image.resize(image, image_size)
         return image
 
@@ -167,7 +192,6 @@ def load_preprocess_test_image(image_size=None):
             lambda: tf.image.decode_jpeg(image, channels=3),
             lambda: tf.image.decode_gif(image)[0])
 
-        # image = keras.layers.experimental.preprocessing.Rescaling(1./255)(image)
         image = tf.image.resize(image, image_size)
         return image
 
@@ -201,13 +225,14 @@ def mix_up(ds_one, ds_two, alpha=0.2):
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (512, 512)
-    BATCH_SIZE = 10
+    IMAGE_SIZE = (299, 299)
+    BATCH_SIZE = 64
     NUM_EPOCHS = 128
-    # NUM_WARMUP_EPOCHS = 6
-    # NUM_HOLD_EPOCHS = 5
     EARLY_STOP_ROUNDS = 5
-    MODEL_NAME = 'EfficentNetB5_rtx3090'
+    MODEL_NAME = 'EfficentNetB0_quardop5000'
+
+    MODEL_LR = 0.001
+    MODEL_LABEL_SMOOTHING = 0.05
 
     CKPT_DIR = './ckpt/'
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
@@ -215,6 +240,7 @@ if __name__ == '__main__':
     IS_TRAIN_FROM_CKPT = False
     IS_SEND_MSG_TO_DINGTALK = True
     IS_DEBUG = False
+    IS_RANDOM_VISUALIZING_PLOTS = False
 
     # 数据loading的path
     if IS_DEBUG:
@@ -278,11 +304,10 @@ if __name__ == '__main__':
         processor_valid_image, num_parallel_calls=mp.cpu_count()
     )
     val_label_ds = tf.data.Dataset.from_tensor_slices(y_val)
-
     val_ds = tf.data.Dataset.zip((val_img_ds, val_label_ds))
 
-    # Performance
-    # train_ds = train_ds.shuffle(buffer_size=int(32 * BATCH_SIZE))
+    # 数据集性能相关参数
+    # ************
     train_ds_x = train_ds_x.shuffle(
         BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
     train_ds_y = train_ds_y.shuffle(
@@ -297,8 +322,6 @@ if __name__ == '__main__':
 
     # 随机可视化几张图片
     # ************
-    IS_RANDOM_VISUALIZING_PLOTS = True
-
     if IS_RANDOM_VISUALIZING_PLOTS:
         plt.figure(figsize=(10, 10))
         for images, labels in train_ds_mu.take(1):
@@ -328,27 +351,23 @@ if __name__ == '__main__':
             save_best_only=True),
         tf.keras.callbacks.ReduceLROnPlateau(
                 monitor='val_acc',
-                factor=0.5,
+                factor=0.7,
                 patience=3,
                 min_lr=0.000003),
         RemoteMonitorDingTalk(
             is_send_msg=IS_SEND_MSG_TO_DINGTALK,
             model_name=CKPT_FOLD_NAME,
             gpu_id=GPU_ID),
-        # LearningRateWarmUpCosineDecayScheduler(
-        #     learning_rate_base=0.0003,
-        #     total_steps=int(n_train_samples * NUM_EPOCHS / BATCH_SIZE),
-        #     global_steps_initial=0,
-        #     warmup_learning_rate=0.0000001,
-        #     warmup_steps=int(n_train_samples * NUM_WARMUP_EPOCHS / BATCH_SIZE),
-        #     hold_steps=int(n_train_samples * NUM_HOLD_EPOCHS / BATCH_SIZE))
     ]
 
     # 训练模型
     model = build_efficentnet_model(
         n_classes=N_CLASSES,
         input_shape=IMAGE_SIZE + (3,),
-        network_type=MODEL_NAME
+        network_type=MODEL_NAME,
+        model_name=MODEL_NAME,
+        model_lr=MODEL_LR,
+        model_label_smoothing=MODEL_LABEL_SMOOTHING,
     )
 
     # 如果模型名的ckpt文件夹不存在，创建该文件夹
