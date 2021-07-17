@@ -117,52 +117,6 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     return model
 
 
-def build_resnext_model():
-    pass
-
-
-def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
-    '''构造preprocessing与model的pipline，并返回编译过的模型。'''
-
-    # 解析preprocessing与model的参数
-    # ---------------------
-    input_shape = kwargs.pop('input_shape', (None, 224, 224))
-    n_classes = kwargs.pop('n_classes', 1000)
-
-    model = tf.keras.Sequential()
-    # initialize the model with input shape
-    model.add(
-        tf.keras.applications.ResNet101V2(
-            input_shape=input_shape, 
-            include_top=False,
-            weights='imagenet',
-        )
-    )
-
-    model.add(tf.keras.layers.GlobalAveragePooling2D())
-    model.add(tf.keras.layers.Flatten())
-    model.add(tf.keras.layers.Dense(
-        256,
-        activation='relu', 
-        bias_regularizer=tf.keras.regularizers.L1L2(l1=0.01, l2=0.001)
-    ))
-    model.add(tf.keras.layers.Dropout(0.5))
-    model.add(tf.keras.layers.Dense(n_classes, activation='softmax'))
-
-    # 编译模型
-    # ---------------------
-    if verbose:
-        model.summary()
-
-    if is_compile:
-        model.compile(
-            loss='categorical_crossentropy',
-            optimizer=Adam(0.0005),
-            metrics=['acc'])
-
-    return model
-
-
 def load_preprocess_train_image(image_size=None):
     '''通过闭包实现参数化的训练集的Image loading。'''
 
@@ -173,12 +127,12 @@ def load_preprocess_train_image(image_size=None):
             lambda: tf.image.decode_jpeg(image, channels=3),
             lambda: tf.image.decode_gif(image)[0])
 
-        image = tf.image.random_brightness(image, 0.3)
+        image = tf.image.random_brightness(image, 0.2)
         image = tf.image.random_flip_left_right(image)
         image = tf.image.random_flip_up_down(image)
 
         image = tf.image.resize(image, image_size)
-        image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
+        # image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
         return image
 
     return load_img
@@ -195,7 +149,7 @@ def load_preprocess_test_image(image_size=None):
             lambda: tf.image.decode_gif(image)[0])
 
         image = tf.image.resize(image, image_size)
-        image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
+        # image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
         return image
 
     return load_img
@@ -208,7 +162,7 @@ if __name__ == '__main__':
     BATCH_SIZE = 10
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 7
-    MODEL_NAME = 'EfficentNetB5_rtx3090'
+    MODEL_NAME = 'EfficentNetB0_rtx3090'
 
     MODEL_LR = 0.0001
     MODEL_LABEL_SMOOTHING = 0
@@ -288,7 +242,7 @@ if __name__ == '__main__':
     # ************
     if IS_RANDOM_VISUALIZING_PLOTS:
         plt.figure(figsize=(10, 10))
-        for images, labels in train_ds_mu.take(1):
+        for images, labels in train_ds.take(1):
             for i in range(9):
                 ax = plt.subplot(3, 3, i + 1)
                 plt.imshow(images[i].numpy().astype('uint8'))

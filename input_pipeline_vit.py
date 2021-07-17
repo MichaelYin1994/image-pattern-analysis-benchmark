@@ -65,11 +65,12 @@ def build_vit_model(verbose=False, is_compile=True, **kwargs):
     model_lr = kwargs.pop('model_lr', 0.01)
     model_label_smoothing = kwargs.pop('model_label_smoothing', 0.1)
 
-    vit_model = vit.vit_b16(
+    vit_model = vit.vit_b32(
         image_size=input_shape[1],
         pretrained=True,
         include_top=False,
         pretrained_top=False)
+    vit_model.trainable = False
 
     model = tf.keras.Sequential()
     model.add(vit_model)
@@ -140,7 +141,7 @@ if __name__ == '__main__':
     IMAGE_SIZE = (384, 384)
     BATCH_SIZE = 16
     NUM_EPOCHS = 128
-    EARLY_STOP_ROUNDS = 6
+    EARLY_STOP_ROUNDS = 7
     MODEL_NAME = 'VisionTransformerBase16_rtx3090'
 
     MODEL_LR = 0.0001
@@ -259,6 +260,7 @@ if __name__ == '__main__':
 
     # 训练模型
     model = build_vit_model(
+        verbose=True,
         n_classes=N_CLASSES,
         input_shape=IMAGE_SIZE + (3,),
         network_type=MODEL_NAME,
