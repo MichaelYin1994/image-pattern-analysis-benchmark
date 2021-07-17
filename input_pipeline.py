@@ -229,7 +229,7 @@ if __name__ == '__main__':
     BATCH_SIZE = 64
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 5
-    MODEL_NAME = 'EfficentNetB0_quardop5000'
+    MODEL_NAME = 'EfficentNetB0_rtx3090'
 
     MODEL_LR = 0.001
     MODEL_LABEL_SMOOTHING = 0.05

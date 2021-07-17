@@ -35,7 +35,7 @@ np.random.seed(GLOBAL_RANDOM_SEED)
 tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
 TASK_NAME = 'iflytek_2021'
-GPU_ID = 0
+GPU_ID = 1
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -65,7 +65,7 @@ def build_vit_model(verbose=False, is_compile=True, **kwargs):
     model_lr = kwargs.pop('model_lr', 0.01)
     model_label_smoothing = kwargs.pop('model_label_smoothing', 0.1)
 
-    vit_model = vit.vit_b32(
+    vit_model = vit.vit_b16(
         image_size=input_shape[1],
         pretrained=True,
         include_top=False,
@@ -111,6 +111,7 @@ def load_preprocess_train_image(image_size=None):
         image = tf.image.random_flip_up_down(image)
 
         image = tf.image.resize(image, image_size)
+        image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
         return image
 
     return load_img
@@ -127,6 +128,7 @@ def load_preprocess_test_image(image_size=None):
             lambda: tf.image.decode_gif(image)[0])
 
         image = tf.image.resize(image, image_size)
+        image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
         return image
 
     return load_img
@@ -136,12 +138,12 @@ if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
     IMAGE_SIZE = (384, 384)
-    BATCH_SIZE = 64
+    BATCH_SIZE = 16
     NUM_EPOCHS = 128
-    EARLY_STOP_ROUNDS = 5
-    MODEL_NAME = 'VisionTransformer_rtx3090'
+    EARLY_STOP_ROUNDS = 6
+    MODEL_NAME = 'VisionTransformerBase16_rtx3090'
 
-    MODEL_LR = 0.001
+    MODEL_LR = 0.0003
     MODEL_LABEL_SMOOTHING = 0
 
     CKPT_DIR = './ckpt/'
