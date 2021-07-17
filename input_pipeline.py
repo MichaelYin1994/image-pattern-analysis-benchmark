@@ -7,6 +7,7 @@
 
 '''
 本模块(input_pipeline.py)构建数据读取与预处理的pipline，并训练神经网络模型。
+其中本模块仅采用简单的数据增强的相关策略。
 '''
 
 import multiprocessing as mp
@@ -177,6 +178,7 @@ def load_preprocess_train_image(image_size=None):
         image = tf.image.random_flip_up_down(image)
 
         image = tf.image.resize(image, image_size)
+        image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
         return image
 
     return load_img
@@ -193,46 +195,23 @@ def load_preprocess_test_image(image_size=None):
             lambda: tf.image.decode_gif(image)[0])
 
         image = tf.image.resize(image, image_size)
+        image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
         return image
 
     return load_img
 
 
-def sample_beta_distribution(size, concentration_0=0.2, concentration_1=0.2):
-    gamma_1_sample = tf.random.gamma(shape=[size], alpha=concentration_1)
-    gamma_2_sample = tf.random.gamma(shape=[size], alpha=concentration_0)
-    return gamma_1_sample / (gamma_1_sample + gamma_2_sample)
-
-
-def mix_up(ds_one, ds_two, alpha=0.2):
-    # Unpack two datasets
-    images_one, labels_one = ds_one
-    images_two, labels_two = ds_two
-    batch_size = tf.shape(images_one)[0]
-
-    # Sample lambda and reshape it to do the mixup
-    l = sample_beta_distribution(batch_size, alpha, alpha)
-    x_l = tf.reshape(l, (batch_size, 1, 1, 1))
-    y_l = tf.reshape(l, (batch_size, 1))
-
-    # Perform mixup on both images and labels by combining a pair of images/labels
-    # (one from each dataset) into one image/label
-    images = images_one * x_l + images_two * (1 - x_l)
-    labels = labels_one * y_l + labels_two * (1 - y_l)
-    return (images, labels)
-
-
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (299, 299)
-    BATCH_SIZE = 64
+    IMAGE_SIZE = (512, 512)
+    BATCH_SIZE = 10
     NUM_EPOCHS = 128
-    EARLY_STOP_ROUNDS = 5
-    MODEL_NAME = 'EfficentNetB0_rtx3090'
+    EARLY_STOP_ROUNDS = 7
+    MODEL_NAME = 'EfficentNetB5_rtx3090'
 
-    MODEL_LR = 0.001
-    MODEL_LABEL_SMOOTHING = 0.05
+    MODEL_LR = 0.0001
+    MODEL_LABEL_SMOOTHING = 0
 
     CKPT_DIR = './ckpt/'
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
@@ -277,23 +256,17 @@ if __name__ == '__main__':
 
     n_train_samples, n_valid_samples = len(X_train), len(X_val)
 
-    # 构造训练数据集的pipline, 尝试使用Mixup进行数据增强
-    # 参考Keras Mixup tutorial(https://keras.io/examples/vision/mixup/)
+    # 构造训练数据集的pipline
     # ************
     processor_train_image = load_preprocess_train_image(image_size=IMAGE_SIZE)
 
     train_path_ds = tf.data.Dataset.from_tensor_slices(X_train)
-    train_img_ds_x = train_path_ds.map(
+    train_img_ds = train_path_ds.map(
         processor_train_image, num_parallel_calls=mp.cpu_count()
     )
-    train_img_ds_y = train_path_ds.map(
-        processor_train_image, num_parallel_calls=mp.cpu_count()
-    )
-    train_label_ds_x = tf.data.Dataset.from_tensor_slices(y_train)
-    train_label_ds_y = tf.data.Dataset.from_tensor_slices(y_train)
+    train_label_ds = tf.data.Dataset.from_tensor_slices(y_train)
 
-    train_ds_x = tf.data.Dataset.zip((train_img_ds_x, train_label_ds_x))
-    train_ds_y = tf.data.Dataset.zip((train_img_ds_y, train_label_ds_y))
+    train_ds = tf.data.Dataset.zip((train_img_ds, train_label_ds))
 
     # 构造validation数据集的pipline
     # ************
@@ -308,16 +281,7 @@ if __name__ == '__main__':
 
     # 数据集性能相关参数
     # ************
-    train_ds_x = train_ds_x.shuffle(
-        BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
-    train_ds_y = train_ds_y.shuffle(
-        BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
-    train_ds = tf.data.Dataset.zip((train_ds_x, train_ds_y))
-    train_ds_mu = train_ds.map(
-        lambda ds_one, ds_two: mix_up(ds_one, ds_two, alpha=0.2),
-        num_parallel_calls=mp.cpu_count()
-    )
-
+    train_ds = train_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
     val_ds = val_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
 
     # 随机可视化几张图片
@@ -389,7 +353,7 @@ if __name__ == '__main__':
             print('File {} can not be deleted !'.format(file_name))
 
     history = model.fit(
-        train_ds_mu,
+        train_ds,
         epochs=NUM_EPOCHS,
         validation_data=val_ds,
         callbacks=callbacks

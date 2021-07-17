@@ -1,12 +1,13 @@
 #!/usr/local/bin python
 # -*- coding: utf-8 -*-
 
-# Created on 202107151457
+# Created on 202107180257
 # Author:     zhuoyin94 <zhuoyin94@163.com>
 # Github:     https://github.com/MichaelYin1994
 
 '''
 本模块(input_pipeline.py)构建数据读取与预处理的pipline，并训练神经网络模型。
+其中本模块采用Mixup，Mixmatch等数据增强策略。
 '''
 
 import multiprocessing as mp
@@ -23,7 +24,6 @@ from tensorflow.keras import Model
 from tensorflow.keras import backend as K
 from tensorflow.keras import layers
 from tensorflow.keras.optimizers import Adam
-from vit_keras import vit
 from tqdm import tqdm
 
 from utils import LearningRateWarmUpCosineDecayScheduler
@@ -35,7 +35,7 @@ np.random.seed(GLOBAL_RANDOM_SEED)
 tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
 TASK_NAME = 'iflytek_2021'
-GPU_ID = 1
+GPU_ID = 0
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -53,7 +53,75 @@ if gpus:
 
 # ----------------------------------------------------------------------------
 
-def build_vit_model(verbose=False, is_compile=True, **kwargs):
+def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
+    '''构造基于imagenet预训练的ResNetV2的模型，并返回编译过的模型。'''
+
+    # 解析preprocessing与model的参数
+    # ---------------------
+    input_shape = kwargs.pop('input_shape', (None, 224, 224))
+    n_classes = kwargs.pop('n_classes', 1000)
+
+    model_name = kwargs.pop('model_name', 'EfficentNetB0')
+    model_lr = kwargs.pop('model_lr', 0.01)
+    model_label_smoothing = kwargs.pop('model_label_smoothing', 0.1)
+
+    # 依据关键字，构建模型
+    # ---------------------
+    model = tf.keras.Sequential()
+
+    if 'B0' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB0
+    elif 'B1' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB1
+    elif 'B2' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB2
+    elif 'B3' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB3
+    elif 'B4' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB4
+    elif 'B5' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB5
+    elif 'B6' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB6
+    elif 'B7' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB7
+
+    model.add(
+        model_tmp(
+            input_shape=input_shape, 
+            include_top=False,
+            weights='imagenet',
+            drop_connect_rate=0.4,
+        )
+    )
+    model.add(tf.keras.layers.GlobalAveragePooling2D())
+    model.add(tf.keras.layers.Flatten())
+    model.add(tf.keras.layers.Dense(
+        256, activation='relu',
+    ))
+    model.add(tf.keras.layers.Dropout(0.5))
+    model.add(tf.keras.layers.Dense(n_classes, activation='softmax'))
+
+    # 编译模型
+    # ---------------------
+    if verbose:
+        model.summary()
+
+    if is_compile:
+        model.compile(
+            loss=tf.keras.losses.CategoricalCrossentropy(
+                label_smoothing=model_label_smoothing),
+            optimizer=Adam(model_lr),
+            metrics=['acc'])
+
+    return model
+
+
+def build_resnext_model():
+    pass
+
+
+def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
     '''构造preprocessing与model的pipline，并返回编译过的模型。'''
 
     # 解析preprocessing与model的参数
@@ -61,18 +129,18 @@ def build_vit_model(verbose=False, is_compile=True, **kwargs):
     input_shape = kwargs.pop('input_shape', (None, 224, 224))
     n_classes = kwargs.pop('n_classes', 1000)
 
-    model_name = kwargs.pop('model_name', 'vit_b32')
-    model_lr = kwargs.pop('model_lr', 0.01)
-    model_label_smoothing = kwargs.pop('model_label_smoothing', 0.1)
-
-    vit_model = vit.vit_b16(
-        image_size=input_shape[1],
-        pretrained=True,
-        include_top=False,
-        pretrained_top=False)
-
     model = tf.keras.Sequential()
-    model.add(vit_model)
+    # initialize the model with input shape
+    model.add(
+        tf.keras.applications.ResNet101V2(
+            input_shape=input_shape, 
+            include_top=False,
+            weights='imagenet',
+        )
+    )
+
+    model.add(tf.keras.layers.GlobalAveragePooling2D())
+    model.add(tf.keras.layers.Flatten())
     model.add(tf.keras.layers.Dense(
         256,
         activation='relu', 
@@ -88,9 +156,8 @@ def build_vit_model(verbose=False, is_compile=True, **kwargs):
 
     if is_compile:
         model.compile(
-            loss=tf.keras.losses.CategoricalCrossentropy(
-                label_smoothing=model_label_smoothing),
-            optimizer=Adam(model_lr),
+            loss='categorical_crossentropy',
+            optimizer=Adam(0.0005),
             metrics=['acc'])
 
     return model
@@ -111,7 +178,6 @@ def load_preprocess_train_image(image_size=None):
         image = tf.image.random_flip_up_down(image)
 
         image = tf.image.resize(image, image_size)
-        image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
         return image
 
     return load_img
@@ -128,23 +194,46 @@ def load_preprocess_test_image(image_size=None):
             lambda: tf.image.decode_gif(image)[0])
 
         image = tf.image.resize(image, image_size)
-        image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
         return image
 
     return load_img
 
 
+def sample_beta_distribution(size, concentration_0=0.2, concentration_1=0.2):
+    gamma_1_sample = tf.random.gamma(shape=[size], alpha=concentration_1)
+    gamma_2_sample = tf.random.gamma(shape=[size], alpha=concentration_0)
+    return gamma_1_sample / (gamma_1_sample + gamma_2_sample)
+
+
+def mix_up(ds_one, ds_two, alpha=0.2):
+    # Unpack two datasets
+    images_one, labels_one = ds_one
+    images_two, labels_two = ds_two
+    batch_size = tf.shape(images_one)[0]
+
+    # Sample lambda and reshape it to do the mixup
+    l = sample_beta_distribution(batch_size, alpha, alpha)
+    x_l = tf.reshape(l, (batch_size, 1, 1, 1))
+    y_l = tf.reshape(l, (batch_size, 1))
+
+    # Perform mixup on both images and labels by combining a pair of images/labels
+    # (one from each dataset) into one image/label
+    images = images_one * x_l + images_two * (1 - x_l)
+    labels = labels_one * y_l + labels_two * (1 - y_l)
+    return (images, labels)
+
+
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (384, 384)
-    BATCH_SIZE = 16
+    IMAGE_SIZE = (299, 299)
+    BATCH_SIZE = 64
     NUM_EPOCHS = 128
-    EARLY_STOP_ROUNDS = 6
-    MODEL_NAME = 'VisionTransformerBase16_rtx3090'
+    EARLY_STOP_ROUNDS = 5
+    MODEL_NAME = 'EfficentNetB0_rtx3090'
 
-    MODEL_LR = 0.0001
-    MODEL_LABEL_SMOOTHING = 0
+    MODEL_LR = 0.001
+    MODEL_LABEL_SMOOTHING = 0.05
 
     CKPT_DIR = './ckpt/'
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
@@ -189,17 +278,23 @@ if __name__ == '__main__':
 
     n_train_samples, n_valid_samples = len(X_train), len(X_val)
 
-    # 构造训练数据集的pipline
+    # 构造训练数据集的pipline, 尝试使用Mixup进行数据增强
+    # 参考Keras Mixup tutorial(https://keras.io/examples/vision/mixup/)
     # ************
     processor_train_image = load_preprocess_train_image(image_size=IMAGE_SIZE)
 
     train_path_ds = tf.data.Dataset.from_tensor_slices(X_train)
-    train_img_ds = train_path_ds.map(
+    train_img_ds_x = train_path_ds.map(
         processor_train_image, num_parallel_calls=mp.cpu_count()
     )
-    train_label_ds = tf.data.Dataset.from_tensor_slices(y_train)
+    train_img_ds_y = train_path_ds.map(
+        processor_train_image, num_parallel_calls=mp.cpu_count()
+    )
+    train_label_ds_x = tf.data.Dataset.from_tensor_slices(y_train)
+    train_label_ds_y = tf.data.Dataset.from_tensor_slices(y_train)
 
-    train_ds = tf.data.Dataset.zip((train_img_ds, train_label_ds))
+    train_ds_x = tf.data.Dataset.zip((train_img_ds_x, train_label_ds_x))
+    train_ds_y = tf.data.Dataset.zip((train_img_ds_y, train_label_ds_y))
 
     # 构造validation数据集的pipline
     # ************
@@ -214,14 +309,23 @@ if __name__ == '__main__':
 
     # 数据集性能相关参数
     # ************
-    train_ds = train_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    train_ds_x = train_ds_x.shuffle(
+        BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    train_ds_y = train_ds_y.shuffle(
+        BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    train_ds = tf.data.Dataset.zip((train_ds_x, train_ds_y))
+    train_ds_mu = train_ds.map(
+        lambda ds_one, ds_two: mix_up(ds_one, ds_two, alpha=0.2),
+        num_parallel_calls=mp.cpu_count()
+    )
+
     val_ds = val_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
 
     # 随机可视化几张图片
     # ************
     if IS_RANDOM_VISUALIZING_PLOTS:
         plt.figure(figsize=(10, 10))
-        for images, labels in train_ds.take(1):
+        for images, labels in train_ds_mu.take(1):
             for i in range(9):
                 ax = plt.subplot(3, 3, i + 1)
                 plt.imshow(images[i].numpy().astype('uint8'))
@@ -258,7 +362,7 @@ if __name__ == '__main__':
     ]
 
     # 训练模型
-    model = build_vit_model(
+    model = build_efficentnet_model(
         n_classes=N_CLASSES,
         input_shape=IMAGE_SIZE + (3,),
         network_type=MODEL_NAME,
@@ -286,7 +390,7 @@ if __name__ == '__main__':
             print('File {} can not be deleted !'.format(file_name))
 
     history = model.fit(
-        train_ds,
+        train_ds_mu,
         epochs=NUM_EPOCHS,
         validation_data=val_ds,
         callbacks=callbacks
@@ -295,8 +399,7 @@ if __name__ == '__main__':
     # 生成Test预测结果，并进行Top-1 Accuracy评估
     # ---------------------
     test_file_name_list = os.listdir(TEST_PATH)
-    test_file_name_list = sorted(
-        test_file_name_list, key=lambda x: int(x.split('.')[0][1:]))
+    test_file_name_list = sorted(test_file_name_list, key=lambda x: int(x.split('.')[0][1:]))
     test_file_fullname_list = [TEST_PATH + item for item in test_file_name_list]
 
     test_path_ds = tf.data.Dataset.from_tensor_slices(test_file_fullname_list)
