@@ -75,6 +75,16 @@ def build_vit_model(verbose=False, is_compile=True, **kwargs):
     model = tf.keras.Sequential()
     model.add(vit_model)
     model.add(tf.keras.layers.Dense(
+        2048,
+        activation='relu', 
+        bias_regularizer=tf.keras.regularizers.L1L2(l1=0.01, l2=0.001)
+    ))
+    model.add(tf.keras.layers.Dense(
+        512,
+        activation='relu', 
+        bias_regularizer=tf.keras.regularizers.L1L2(l1=0.01, l2=0.001)
+    ))
+    model.add(tf.keras.layers.Dense(
         256,
         activation='relu', 
         bias_regularizer=tf.keras.regularizers.L1L2(l1=0.01, l2=0.001)
@@ -139,12 +149,12 @@ if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
     IMAGE_SIZE = (384, 384)
-    BATCH_SIZE = 16
+    BATCH_SIZE = 32
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 7
     MODEL_NAME = 'VisionTransformerBase16_rtx3090'
 
-    MODEL_LR = 0.0001
+    MODEL_LR = 0.0007
     MODEL_LABEL_SMOOTHING = 0
 
     CKPT_DIR = './ckpt/'
