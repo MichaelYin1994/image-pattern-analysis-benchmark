@@ -337,5 +337,6 @@ if __name__ == '__main__':
     )
     test_pred_df['category_id'] = test_pred_label_list
 
-    sub_file_name = str(len(os.listdir('./submissions')) + 1) + '_sub.csv'
+    sub_file_name = str(len(os.listdir('./submissions')) + 1) + \
+        '_{}_sub.csv'.format(MODEL_NAME)
     test_pred_df.to_csv('./submissions/{}'.format(sub_file_name), index=False)

@@ -31,8 +31,8 @@ from dingtalk_remote_monitor import RemoteMonitorDingTalk
 from models import build_model_resnet50_v2, build_model_resnet101_v2
 
 GLOBAL_RANDOM_SEED = 7555
-np.random.seed(GLOBAL_RANDOM_SEED)
-tf.random.set_seed(GLOBAL_RANDOM_SEED)
+# np.random.seed(GLOBAL_RANDOM_SEED)
+# tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
 TASK_NAME = 'iflytek_2021'
 GPU_ID = 0
@@ -163,38 +163,39 @@ def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
     return model
 
 
-def load_preprocess_train_image(image_size=None):
-    '''通过闭包实现参数化的训练集的Image loading。'''
+def load_preprocessing_img(image_size, stage):
+    '''通过闭包实现参数化的Image Loading与TTA数据增强。'''
+    if stage not in ['train', 'valid', 'test']:
+        raise ValueError('stage must be either train, valid or test !')
 
-    def load_img(path=None):
-        image = tf.io.read_file(path)
-        image = tf.cond(
-            tf.image.is_jpeg(image),
-            lambda: tf.image.decode_jpeg(image, channels=3),
-            lambda: tf.image.decode_gif(image)[0])
+    if stage is 'train' or stage is 'test':
+        def load_img(path=None):
+            image = tf.io.read_file(path)
+            image = tf.cond(
+                tf.image.is_jpeg(image),
+                lambda: tf.image.decode_jpeg(image, channels=3),
+                lambda: tf.image.decode_gif(image)[0])
 
-        image = tf.image.random_brightness(image, 0.3)
-        image = tf.image.random_flip_left_right(image)
-        image = tf.image.random_flip_up_down(image)
+            image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
+            image = tf.image.random_hue(image, max_delta=0.2)
+            image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
+            image = tf.image.random_brightness(image, 0.3)
 
-        image = tf.image.resize(image, image_size)
-        return image
+            image = tf.image.random_flip_left_right(image)
+            image = tf.image.random_flip_up_down(image)
 
-    return load_img
+            image = tf.image.resize(image, image_size)
+            return image
+    else:
+        def load_img(path=None):
+            image = tf.io.read_file(path)
+            image = tf.cond(
+                tf.image.is_jpeg(image),
+                lambda: tf.image.decode_jpeg(image, channels=3),
+                lambda: tf.image.decode_gif(image)[0])
 
-
-def load_preprocess_test_image(image_size=None):
-    '''通过闭包实现参数化的测试集的Image loading。'''
-
-    def load_img(path=None):
-        image = tf.io.read_file(path)
-        image = tf.cond(
-            tf.image.is_jpeg(image),
-            lambda: tf.image.decode_jpeg(image, channels=3),
-            lambda: tf.image.decode_gif(image)[0])
-
-        image = tf.image.resize(image, image_size)
-        return image
+            image = tf.image.resize(image, image_size)
+            return image
 
     return load_img
 
@@ -206,18 +207,18 @@ def sample_beta_distribution(size, concentration_0=0.2, concentration_1=0.2):
 
 
 def mix_up(ds_one, ds_two, alpha=0.2):
-    # Unpack two datasets
+    '''对输入2个tf.data.Dataset对象执行mix_up数据增强'''
+    # 解压2个tf.data.Dataset实例
     images_one, labels_one = ds_one
     images_two, labels_two = ds_two
     batch_size = tf.shape(images_one)[0]
 
-    # Sample lambda and reshape it to do the mixup
+    # 确定lambda参数用于Mixup
     l = sample_beta_distribution(batch_size, alpha, alpha)
     x_l = tf.reshape(l, (batch_size, 1, 1, 1))
     y_l = tf.reshape(l, (batch_size, 1))
 
-    # Perform mixup on both images and labels by combining a pair of images/labels
-    # (one from each dataset) into one image/label
+    # 进行Mixup
     images = images_one * x_l + images_two * (1 - x_l)
     labels = labels_one * y_l + labels_two * (1 - y_l)
     return (images, labels)
@@ -226,14 +227,15 @@ def mix_up(ds_one, ds_two, alpha=0.2):
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (299, 299)
-    BATCH_SIZE = 64
+    IMAGE_SIZE = (512, 512)
+    BATCH_SIZE = 10
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 5
-    MODEL_NAME = 'EfficentNetB0_rtx3090'
+    TTA_ROUNDS = 5
 
-    MODEL_LR = 0.001
-    MODEL_LABEL_SMOOTHING = 0.05
+    MODEL_NAME = 'EfficentNetB5_dataaug_rtx3090'
+    MODEL_LR = 0.0001
+    MODEL_LABEL_SMOOTHING = 0
 
     CKPT_DIR = './ckpt/'
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
@@ -281,7 +283,8 @@ if __name__ == '__main__':
     # 构造训练数据集的pipline, 尝试使用Mixup进行数据增强
     # 参考Keras Mixup tutorial(https://keras.io/examples/vision/mixup/)
     # ************
-    processor_train_image = load_preprocess_train_image(image_size=IMAGE_SIZE)
+    processor_train_image = load_preprocessing_img(
+        image_size=IMAGE_SIZE, stage='train')
 
     train_path_ds = tf.data.Dataset.from_tensor_slices(X_train)
     train_img_ds_x = train_path_ds.map(
@@ -298,7 +301,8 @@ if __name__ == '__main__':
 
     # 构造validation数据集的pipline
     # ************
-    processor_valid_image = load_preprocess_test_image(image_size=IMAGE_SIZE)
+    processor_valid_image = load_preprocessing_img(
+        image_size=IMAGE_SIZE, stage='valid')
 
     val_path_ds = tf.data.Dataset.from_tensor_slices(X_val)
     val_img_ds = val_path_ds.map(
@@ -399,11 +403,13 @@ if __name__ == '__main__':
     # 生成Test预测结果，并进行Top-1 Accuracy评估
     # ---------------------
     test_file_name_list = os.listdir(TEST_PATH)
-    test_file_name_list = sorted(test_file_name_list, key=lambda x: int(x.split('.')[0][1:]))
+    test_file_name_list = \
+        sorted(test_file_name_list, key=lambda x: int(x.split('.')[0][1:]))
     test_file_fullname_list = [TEST_PATH + item for item in test_file_name_list]
 
     test_path_ds = tf.data.Dataset.from_tensor_slices(test_file_fullname_list)
-    processor_test_image = load_preprocess_test_image(image_size=IMAGE_SIZE)
+    processor_test_image = load_preprocessing_img(
+        image_size=IMAGE_SIZE, stage='test')
     test_ds = test_path_ds.map(
         processor_test_image,
         num_parallel_calls=mp.cpu_count()
@@ -411,7 +417,11 @@ if __name__ == '__main__':
     test_ds = test_ds.batch(BATCH_SIZE)
     test_ds = test_ds.prefetch(buffer_size=int(BATCH_SIZE * 2))
 
-    test_pred_proba = model.predict(test_ds)
+    # TTA强化
+    test_pred_proba_list = []
+    for i in tqdm(range(TTA_ROUNDS)):
+        test_pred_proba_list.append(model.predict(test_ds))
+    test_pred_proba = np.mean(test_pred_proba_list, axis=0)
     test_pred_label_list = np.argmax(test_pred_proba, axis=1)
 
     test_pred_df = pd.DataFrame(
@@ -420,5 +430,6 @@ if __name__ == '__main__':
     )
     test_pred_df['category_id'] = test_pred_label_list
 
-    sub_file_name = str(len(os.listdir('./submissions')) + 1) + '_sub.csv'
+    sub_file_name = str(len(os.listdir('./submissions')) + 1) + \
+        '_{}_sub.csv'.format(MODEL_NAME)
     test_pred_df.to_csv('./submissions/{}'.format(sub_file_name), index=False)

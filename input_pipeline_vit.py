@@ -35,7 +35,7 @@ np.random.seed(GLOBAL_RANDOM_SEED)
 tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
 TASK_NAME = 'iflytek_2021'
-GPU_ID = 1
+GPU_ID = 0
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -161,7 +161,7 @@ if __name__ == '__main__':
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = True
+    IS_SEND_MSG_TO_DINGTALK = False
     IS_DEBUG = False
     IS_RANDOM_VISUALIZING_PLOTS = False
 
@@ -329,5 +329,6 @@ if __name__ == '__main__':
     )
     test_pred_df['category_id'] = test_pred_label_list
 
-    sub_file_name = str(len(os.listdir('./submissions')) + 1) + '_sub.csv'
+    sub_file_name = str(len(os.listdir('./submissions')) + 1) + \
+        '_{}_sub.csv'.format(MODEL_NAME)
     test_pred_df.to_csv('./submissions/{}'.format(sub_file_name), index=False)
