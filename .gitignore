@@ -5,7 +5,13 @@ models/*
 submissions/*
 ckpt/*
 logs/*
-__pycache__/*
+
+./iflytek-digital-marketing/ckpt/*
+./iflytek-promote-shooting/ckpt/*
+./iflytek-image-retrieval/ckpt/*
+./iflytek-human-face-emotion/ckpt/*
+
+./iflytek-digital-marketing/__pycache__/*
 
 *.csv
 *.tsv
