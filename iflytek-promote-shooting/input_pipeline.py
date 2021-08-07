@@ -74,13 +74,77 @@ def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
     elif '101' in model_name:
         model_tmp = tf.keras.applications.ResNet101V2
     elif '152' in model_name:
-        model_tmp = tf.keras.applications.ResNet101V2152
+        model_tmp = tf.keras.applications.ResNet152V2
 
     model.add(
         model_tmp(
             input_shape=input_shape, 
             include_top=False,
             weights='imagenet',
+        )
+    )
+    model.add(tf.keras.layers.GlobalAveragePooling2D())
+    model.add(tf.keras.layers.Flatten())
+    model.add(tf.keras.layers.Dense(
+        256, activation='relu',
+    ))
+    model.add(tf.keras.layers.Dropout(0.5))
+    model.add(tf.keras.layers.Dense(n_classes, activation='softmax'))
+
+    # 编译模型
+    # ---------------------
+    if verbose:
+        model.summary()
+
+    if is_compile:
+        model.compile(
+            loss=tf.keras.losses.CategoricalCrossentropy(
+                label_smoothing=model_label_smoothing),
+            optimizer=Adam(model_lr),
+            metrics=['acc'])
+
+    return model
+
+
+def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
+    '''构造基于imagenet预训练的ResNetV2的模型，并返回编译过的模型。'''
+
+    # 解析preprocessing与model的参数
+    # ---------------------
+    input_shape = kwargs.pop('input_shape', (None, 224, 224))
+    n_classes = kwargs.pop('n_classes', 1000)
+
+    model_name = kwargs.pop('model_name', 'EfficentNetB0')
+    model_lr = kwargs.pop('model_lr', 0.01)
+    model_label_smoothing = kwargs.pop('model_label_smoothing', 0.1)
+
+    # 依据关键字，构建模型
+    # ---------------------
+    model = tf.keras.Sequential()
+
+    if 'B0' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB0
+    elif 'B1' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB1
+    elif 'B2' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB2
+    elif 'B3' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB3
+    elif 'B4' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB4
+    elif 'B5' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB5
+    elif 'B6' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB6
+    elif 'B7' in model_name:
+        model_tmp = tf.keras.applications.EfficientNetB7
+
+    model.add(
+        model_tmp(
+            input_shape=input_shape, 
+            include_top=False,
+            weights='imagenet',
+            drop_connect_rate=0.4,
         )
     )
     model.add(tf.keras.layers.GlobalAveragePooling2D())
@@ -155,6 +219,7 @@ if __name__ == '__main__':
     TTA_ROUNDS = 20
     IS_STRATIFIED = True
     MODEL_NAME = 'ResNet50v2_rtx3090'
+    MODEL_NAME = 'EfficentNetB0_rtx3090'
 
     MODEL_LR = 0.00003
     MODEL_LABEL_SMOOTHING = 0
@@ -289,7 +354,7 @@ if __name__ == '__main__':
 
         # 构造与编译模型
         # ***********
-        model = build_resnetv2_model(
+        model = build_efficentnet_model(
             n_classes=N_CLASSES,
             input_shape=IMAGE_SIZE + (3,),
             network_type=MODEL_NAME,
