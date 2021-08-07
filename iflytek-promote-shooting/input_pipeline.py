@@ -124,8 +124,8 @@ def load_preprocessing_img(image_size, stage):
             image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
             image = tf.image.random_brightness(image, 0.3)
 
-            image = tf.image.random_flip_left_right(image)
-            image = tf.image.random_flip_up_down(image)
+            # image = tf.image.random_flip_left_right(image)
+            # image = tf.image.random_flip_up_down(image)
 
             image = tf.image.resize(image, image_size)
             return image
@@ -147,16 +147,16 @@ def load_preprocessing_img(image_size, stage):
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (512, 512)
+    IMAGE_SIZE = (960, 544)
     BATCH_SIZE = 16
     NUM_EPOCHS = 256
     EARLY_STOP_ROUNDS = 30
     N_FOLDS = 5
     TTA_ROUNDS = 20
     IS_STRATIFIED = True
-    MODEL_NAME = 'ResNet101v2_rtx3090'
+    MODEL_NAME = 'ResNet50v2_rtx3090'
 
-    MODEL_LR = 0.0001
+    MODEL_LR = 0.00003
     MODEL_LABEL_SMOOTHING = 0
 
     CKPT_DIR = './ckpt/'
@@ -230,7 +230,7 @@ if __name__ == '__main__':
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
         monitor='val_acc',
         factor=0.7,
-        patience=3,
+        patience=15,
         min_lr=0.000003)
 
     if IS_STRATIFIED:
@@ -324,7 +324,7 @@ if __name__ == '__main__':
         ckpt_saver = tf.keras.callbacks.ModelCheckpoint(
                 filepath=os.path.join(
                     CKPT_DIR + ckpt_fold_name_tmp,
-                    MODEL_NAME + '_epoch_{epoch:02d}_valacc_{val_acc:.3f}.ckpt'),
+                    MODEL_NAME + '.ckpt'),
                 monitor='val_acc',
                 mode='max',
                 save_weights_only=True,
