@@ -26,9 +26,9 @@ from tensorflow.keras import layers
 from tensorflow.keras.optimizers import Adam
 from tqdm import tqdm
 
-from utils import LearningRateWarmUpCosineDecayScheduler
 from dingtalk_remote_monitor import RemoteMonitorDingTalk
 from models import build_model_resnet50_v2, build_model_resnet101_v2
+from utils import LearningRateWarmUpCosineDecayScheduler, LoadSave
 
 GLOBAL_RANDOM_SEED = 7555
 # np.random.seed(GLOBAL_RANDOM_SEED)
@@ -118,11 +118,12 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
 
 
 def build_resnext_model():
+    '''基于Keras构建ResNeXt模型，并返回编译过的模型对象'''
     pass
 
 
 def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
-    '''构造preprocessing与model的pipline，并返回编译过的模型。'''
+    '''构造preprocessing与model的pipeline，并返回编译过的模型。'''
 
     # 解析preprocessing与model的参数
     # ---------------------
@@ -201,6 +202,7 @@ def load_preprocessing_img(image_size, stage):
 
 
 def sample_beta_distribution(size, concentration_0=0.2, concentration_1=0.2):
+    '''Beta分布抽取生成器'''
     gamma_1_sample = tf.random.gamma(shape=[size], alpha=concentration_1)
     gamma_2_sample = tf.random.gamma(shape=[size], alpha=concentration_0)
     return gamma_1_sample / (gamma_1_sample + gamma_2_sample)
@@ -229,9 +231,9 @@ if __name__ == '__main__':
     # ---------------------
     IMAGE_SIZE = (512, 512)
     BATCH_SIZE = 10
-    NUM_EPOCHS = 128
+    NUM_EPOCHS = 0
     EARLY_STOP_ROUNDS = 5
-    TTA_ROUNDS = 5
+    TTA_ROUNDS = 3
 
     MODEL_NAME = 'EfficentNetB5_dataaug_rtx3090'
     MODEL_LR = 0.0001
@@ -241,7 +243,7 @@ if __name__ == '__main__':
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = True
+    IS_SEND_MSG_TO_DINGTALK = False
     IS_DEBUG = False
     IS_RANDOM_VISUALIZING_PLOTS = False
 
@@ -417,7 +419,7 @@ if __name__ == '__main__':
     test_ds = test_ds.batch(BATCH_SIZE)
     test_ds = test_ds.prefetch(buffer_size=int(BATCH_SIZE * 2))
 
-    # TTA强化
+    # 进行TTA强化
     test_pred_proba_list = []
     for i in tqdm(range(TTA_ROUNDS)):
         test_pred_proba_list.append(model.predict(test_ds))
@@ -431,5 +433,14 @@ if __name__ == '__main__':
     test_pred_df['category_id'] = test_pred_label_list
 
     sub_file_name = str(len(os.listdir('./submissions')) + 1) + \
-        '_{}_sub.csv'.format(MODEL_NAME)
-    test_pred_df.to_csv('./submissions/{}'.format(sub_file_name), index=False)
+        '_{}_sub'.format(MODEL_NAME)
+    test_pred_df.to_csv('./submissions/{}.csv'.format(sub_file_name), index=False)
+
+    # 保存提交概率情况
+    file_processor = LoadSave(dir_name='./submissions_proba/')
+    test_pkl_res = [test_pred_df] + test_pred_proba_list
+
+    file_processor.save_data(
+        file_name=sub_file_name + '.pkl',
+        data_file=test_pkl_res
+    )

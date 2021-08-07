@@ -34,7 +34,7 @@ GLOBAL_RANDOM_SEED = 7555
 np.random.seed(GLOBAL_RANDOM_SEED)
 tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
-TASK_NAME = 'iflytek_2021'
+TASK_NAME = 'iflytek_2021_digital_marketing'
 GPU_ID = 0
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
