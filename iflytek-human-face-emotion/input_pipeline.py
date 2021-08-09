@@ -1,7 +1,7 @@
 #!/usr/local/bin python
 # -*- coding: utf-8 -*-
 
-# Created on 202108072008
+# Created on 202108091732
 # Author:     zhuoyin94 <zhuoyin94@163.com>
 # Github:     https://github.com/MichaelYin1994
 
@@ -34,7 +34,7 @@ GLOBAL_RANDOM_SEED = 7555
 # np.random.seed(GLOBAL_RANDOM_SEED)
 # tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
-TASK_NAME = 'iflytek_2021_promote_shooting'
+TASK_NAME = 'iflytek_2021_human_face_emotion'
 GPU_ID = 0
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -177,7 +177,7 @@ def load_preprocessing_img(image_size, stage):
     if stage not in ['train', 'valid', 'test']:
         raise ValueError('stage must be either train, valid or test !')
 
-    if stage is 'train' or stage is 'test':
+    if stage == 'train' or stage == 'test':
         def load_img(path=None):
             image = tf.io.read_file(path)
             image = tf.cond(
@@ -190,8 +190,8 @@ def load_preprocessing_img(image_size, stage):
             image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
             image = tf.image.random_brightness(image, 0.3)
 
-            # image = tf.image.random_flip_left_right(image)
-            # image = tf.image.random_flip_up_down(image)
+            image = tf.image.random_flip_left_right(image)
+            image = tf.image.random_flip_up_down(image)
 
             image = tf.image.resize(image, image_size)
             image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
@@ -211,20 +211,19 @@ def load_preprocessing_img(image_size, stage):
     return load_img
 
 
-
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (960, 544)
-    BATCH_SIZE = 32
+    IMAGE_SIZE = (128, 128)
+    BATCH_SIZE = 128
     NUM_EPOCHS = 256
     EARLY_STOP_ROUNDS = 30
     N_FOLDS = 4
-    TTA_ROUNDS = 50
-    IS_STRATIFIED = True
-    MODEL_NAME = 'ResNet101v2_rtx3090'
+    TTA_ROUNDS = 5
+    IS_STRATIFIED = False
+    MODEL_NAME = 'ResNet50v2_rtx3090'
 
-    MODEL_LR = 0.00003
+    MODEL_LR = 0.0003
     MODEL_LABEL_SMOOTHING = 0
 
     CKPT_DIR = './ckpt/'
@@ -232,39 +231,51 @@ if __name__ == '__main__':
 
     IS_TRAIN_FROM_CKPT = False
     IS_SEND_MSG_TO_DINGTALK = False
-    IS_DEBUG = False
     IS_RANDOM_VISUALIZING_PLOTS = False
 
     # 数据loading的path
-    if IS_DEBUG:
-        TRAIN_PATH = './data/train_debug/'
-        TEST_PATH = './data/test_debug/'
-    else:
-        TRAIN_PATH = './data/train/'
-        TEST_PATH = './data/test/'
-    N_CLASSES = 8
+    TRAIN_PATH = './data/train/'
+    TEST_PATH = './data/test/'
+    N_CLASSES = len(os.listdir(TRAIN_PATH))
 
     # 利用tensorflow的preprocessing方法读取数据集
     # ---------------------
+    train_file_full_name_list = []
+    train_label_list = []
+    for dir_name in os.listdir(TRAIN_PATH):
+        full_path_name = os.path.join(TRAIN_PATH, dir_name)
+        for file_name in os.listdir(full_path_name):
+            train_file_full_name_list.append(
+                os.path.join(full_path_name, file_name)
+            )
+            train_label_list.append(dir_name)
 
-    # 读取label的*.csv格式
-    train_label_df = pd.read_csv('./data/train.csv')
-    train_label_df['label'] = train_label_df['label'].apply(lambda x: int(x-1))
-
-    train_file_full_name_list = train_label_df['image'].values.tolist()
-    train_file_full_name_list = \
-        [os.path.join(TRAIN_PATH, item) for item in train_file_full_name_list]
-    train_label_list = train_label_df['label'].values.tolist()
+    label2id = {
+        'angry': 0,
+        'disgusted': 1,
+        'fearful': 2,
+        'happy': 3,
+        'neutral': 4,
+        'sad': 5,
+        'surprised': 6,
+    }
+    id2label = {
+        0: 'angry',
+        1: 'disgusted',
+        2: 'fearful',
+        3: 'happy',
+        4: 'neutral',
+        5: 'sad',
+        6: 'surprised',
+    }
+    train_label_oht_array = [label2id[item] for item in train_label_list]
+    train_label_oht_array = np.array(train_label_list)
 
     test_file_name_list = os.listdir(TEST_PATH)
-    test_file_name_list = \
-        sorted(test_file_name_list, key=lambda x: int(x.split('.')[0][5:]))
     test_file_fullname_list = \
         [os.path.join(TEST_PATH, item) for item in test_file_name_list]
 
     # 编码训练标签
-    train_label_oht_array = np.array(train_label_list)
-
     encoder = OneHotEncoder(sparse=False)
     train_label_oht_array = encoder.fit_transform(
         train_label_oht_array.reshape(-1, 1)).astype(np.float32)
@@ -282,7 +293,7 @@ if __name__ == '__main__':
 
     # 准备训练数据与训练模型
     # --------------------------------
-    n_train_samples = len(train_label_df)
+    n_train_samples = len(train_file_full_name_list)
     n_test_samples = len(test_file_fullname_list)
     test_pred_proba_list = []
 
@@ -414,12 +425,14 @@ if __name__ == '__main__':
     # 保存测试预测结果
     # --------------------------------
     test_pred_proba = np.mean(test_pred_proba_list, axis=0)
-    test_pred_label_list = np.argmax(test_pred_proba, axis=1) + 1
+    test_pred_label_list = np.argmax(test_pred_proba, axis=1)
     test_pred_label_list = test_pred_label_list.astype('int')
+
+    test_pred_label_list = [id2label[int(item)] for item in test_pred_label_list]
 
     test_pred_df = pd.DataFrame(
         test_file_name_list,
-        columns=['image']
+        columns=['name']
     )
     test_pred_df['label'] = test_pred_label_list
 
