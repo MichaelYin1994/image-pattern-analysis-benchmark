@@ -144,12 +144,21 @@ def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
         include_top=False,
         weights='imagenet',
     )
-    model.add(model_tmp)
+    model_tmp.trainable = False
 
+    model.add(model_tmp)
     model.add(tf.keras.layers.GlobalAveragePooling2D())
     model.add(tf.keras.layers.Flatten())
     model.add(tf.keras.layers.Dense(
+        1024, activation='relu',
+    ))
+    model.add(tf.keras.layers.Dropout(0.5))
+    model.add(tf.keras.layers.Dense(
         256, activation='relu',
+    ))
+    model.add(tf.keras.layers.Dropout(0.5))
+    model.add(tf.keras.layers.Dense(
+        64, activation='relu',
     ))
     model.add(tf.keras.layers.Dropout(0.5))
     model.add(tf.keras.layers.Dense(n_classes, activation='softmax'))
@@ -202,18 +211,27 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     elif 'B7' in model_name:
         model_tmp = tf.keras.applications.EfficientNetB7
 
-    model.add(
-        model_tmp(
-            input_shape=input_shape, 
-            include_top=False,
-            weights='imagenet',
-            drop_connect_rate=0.4,
-        )
+    model_tmp = model_tmp(
+        input_shape=input_shape, 
+        include_top=False,
+        weights='imagenet',
+        drop_connect_rate=0.4,
     )
+    model_tmp.trainable = False
+
+    model.add(model_tmp)
     model.add(tf.keras.layers.GlobalAveragePooling2D())
     model.add(tf.keras.layers.Flatten())
     model.add(tf.keras.layers.Dense(
+        1024, activation='relu',
+    ))
+    model.add(tf.keras.layers.Dropout(0.5))
+    model.add(tf.keras.layers.Dense(
         256, activation='relu',
+    ))
+    model.add(tf.keras.layers.Dropout(0.5))
+    model.add(tf.keras.layers.Dense(
+        64, activation='relu',
     ))
     model.add(tf.keras.layers.Dropout(0.5))
     model.add(tf.keras.layers.Dense(n_classes, activation='softmax'))
@@ -242,15 +260,15 @@ def load_preprocessing_img(image_size, stage):
         def load_img(path=None):
             image = tf.io.read_file(path)
             image = tf.image.decode_jpeg(image, channels=1)
-            # image = tf.concat([image, image, image], axis=-1)
+            image = tf.concat([image, image, image], axis=-1)
 
             # image = tf.image.random_saturation(image, lower=0.5, upper=1.5)
             # image = tf.image.random_hue(image, max_delta=0.2)
             # image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
             # image = tf.image.random_brightness(image, 0.3)
 
-            # image = tf.image.random_flip_left_right(image)
-            # image = tf.image.random_flip_up_down(image)
+            image = tf.image.random_flip_left_right(image)
+            image = tf.image.random_flip_up_down(image)
 
             image = tf.image.resize(image, image_size)
             image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
@@ -259,7 +277,7 @@ def load_preprocessing_img(image_size, stage):
         def load_img(path=None):
             image = tf.io.read_file(path)
             image = tf.image.decode_jpeg(image, channels=1)
-            # image = tf.concat([image, image, image], axis=-1)
+            image = tf.concat([image, image, image], axis=-1)
 
             # image = tf.image.resize(image, image_size)
             image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
@@ -271,14 +289,14 @@ def load_preprocessing_img(image_size, stage):
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (386, 386)
+    IMAGE_SIZE = (512, 512)
     BATCH_SIZE = 8
     NUM_EPOCHS = 256
     EARLY_STOP_ROUNDS = 30
     N_FOLDS = 5
     TTA_ROUNDS = 5
     IS_STRATIFIED = True
-    MODEL_NAME = 'ResNet50V2_rtx3090'
+    MODEL_NAME = 'EfficentNetB5_rtx3090'
 
     MODEL_LR = 0.00003
     MODEL_LABEL_SMOOTHING = 0
@@ -440,9 +458,9 @@ if __name__ == '__main__':
 
         # 构造与编译模型
         # ***********
-        model = build_simple_convnet(
+        model = build_efficentnet_model(
             n_classes=N_CLASSES,
-            input_shape=IMAGE_SIZE + (1,),
+            input_shape=IMAGE_SIZE + (3,),
             network_type=MODEL_NAME,
             model_name=MODEL_NAME,
             model_lr=MODEL_LR,
