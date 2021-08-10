@@ -34,8 +34,8 @@ GLOBAL_RANDOM_SEED = 7555
 # np.random.seed(GLOBAL_RANDOM_SEED)
 # tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
-TASK_NAME = 'iflytek_2021'
-GPU_ID = 0
+TASK_NAME = 'iflytek_2021_digital_marketing'
+GPU_ID = 5
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -117,53 +117,6 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     return model
 
 
-def build_resnext_model():
-    '''基于Keras构建ResNeXt模型，并返回编译过的模型对象'''
-    pass
-
-
-def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
-    '''构造preprocessing与model的pipeline，并返回编译过的模型。'''
-
-    # 解析preprocessing与model的参数
-    # ---------------------
-    input_shape = kwargs.pop('input_shape', (None, 224, 224))
-    n_classes = kwargs.pop('n_classes', 1000)
-
-    model = tf.keras.Sequential()
-    # initialize the model with input shape
-    model.add(
-        tf.keras.applications.ResNet101V2(
-            input_shape=input_shape, 
-            include_top=False,
-            weights='imagenet',
-        )
-    )
-
-    model.add(tf.keras.layers.GlobalAveragePooling2D())
-    model.add(tf.keras.layers.Flatten())
-    model.add(tf.keras.layers.Dense(
-        256,
-        activation='relu', 
-        bias_regularizer=tf.keras.regularizers.L1L2(l1=0.01, l2=0.001)
-    ))
-    model.add(tf.keras.layers.Dropout(0.5))
-    model.add(tf.keras.layers.Dense(n_classes, activation='softmax'))
-
-    # 编译模型
-    # ---------------------
-    if verbose:
-        model.summary()
-
-    if is_compile:
-        model.compile(
-            loss='categorical_crossentropy',
-            optimizer=Adam(0.0005),
-            metrics=['acc'])
-
-    return model
-
-
 def load_preprocessing_img(image_size, stage):
     '''通过闭包实现参数化的Image Loading与TTA数据增强。'''
     if stage not in ['train', 'valid', 'test']:
@@ -182,8 +135,8 @@ def load_preprocessing_img(image_size, stage):
             image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
             image = tf.image.random_brightness(image, 0.3)
 
-            image = tf.image.random_flip_left_right(image)
-            image = tf.image.random_flip_up_down(image)
+            # image = tf.image.random_flip_left_right(image)
+            # image = tf.image.random_flip_up_down(image)
 
             image = tf.image.resize(image, image_size)
             return image
@@ -231,19 +184,19 @@ if __name__ == '__main__':
     # ---------------------
     IMAGE_SIZE = (512, 512)
     BATCH_SIZE = 10
-    NUM_EPOCHS = 0
-    EARLY_STOP_ROUNDS = 5
-    TTA_ROUNDS = 3
+    NUM_EPOCHS = 128
+    EARLY_STOP_ROUNDS = 6
+    TTA_ROUNDS = 20
 
     MODEL_NAME = 'EfficentNetB5_dataaug_rtx3090'
-    MODEL_LR = 0.0001
+    MODEL_LR = 0.00001
     MODEL_LABEL_SMOOTHING = 0
 
     CKPT_DIR = './ckpt/'
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = False
+    IS_SEND_MSG_TO_DINGTALK = True
     IS_DEBUG = False
     IS_RANDOM_VISUALIZING_PLOTS = False
 

@@ -267,8 +267,8 @@ def load_preprocessing_img(image_size, stage):
             # image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
             # image = tf.image.random_brightness(image, 0.3)
 
-            image = tf.image.random_flip_left_right(image)
-            image = tf.image.random_flip_up_down(image)
+            # image = tf.image.random_flip_left_right(image)
+            # image = tf.image.random_flip_up_down(image)
 
             image = tf.image.resize(image, image_size)
             image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
