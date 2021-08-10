@@ -69,19 +69,19 @@ def build_simple_convnet(verbose=False, is_compile=True, **kwargs):
     # ---------------------
     layer_input = tf.keras.layers.Input(shape=input_shape, dtype='float32')
 
-    layer_input = tf.keras.layers.BatchNormalization()(layer_input)
+    # layer_input = tf.keras.layers.BatchNormalization()(layer_input)
     layer_conv = tf.keras.layers.Conv2D(
-        filters=256, kernel_size=5, padding='same',
+        filters=128, kernel_size=5, padding='same',
     )(layer_input)
 
-    layer_conv = tf.keras.layers.BatchNormalization()(layer_conv)
-    layer_conv = tf.keras.layers.Conv2D(
-        filters=512, kernel_size=3, padding='same',
-    )(layer_conv)
-
-    layer_conv = tf.keras.layers.BatchNormalization()(layer_conv)
+    # layer_conv = tf.keras.layers.BatchNormalization()(layer_conv)
     layer_conv = tf.keras.layers.Conv2D(
         filters=256, kernel_size=3, padding='same',
+    )(layer_conv)
+
+    # layer_conv = tf.keras.layers.BatchNormalization()(layer_conv)
+    layer_conv = tf.keras.layers.Conv2D(
+        filters=128, kernel_size=3, padding='same',
     )(layer_conv)
 
     layer_avg_pool = tf.keras.layers.GlobalAveragePooling2D()(layer_conv)
@@ -113,7 +113,7 @@ def build_simple_convnet(verbose=False, is_compile=True, **kwargs):
             metrics=['acc'])
 
     return model
-    
+
 
 def build_resnetv2_model(verbose=False, is_compile=True, **kwargs):
     '''构造preprocessing与model的pipeline，并返回编译过的模型。'''
@@ -259,7 +259,7 @@ def load_preprocessing_img(image_size, stage):
         def load_img(path=None):
             image = tf.io.read_file(path)
             image = tf.image.decode_jpeg(image, channels=1)
-            image = tf.concat([image, image, image], axis=-1)
+            # image = tf.concat([image, image, image], axis=-1)
 
             # image = tf.image.resize(image, image_size)
             image = tf.keras.layers.experimental.preprocessing.Rescaling(1. / 255.)(image)
@@ -271,8 +271,8 @@ def load_preprocessing_img(image_size, stage):
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (48, 48)
-    BATCH_SIZE = 128
+    IMAGE_SIZE = (386, 386)
+    BATCH_SIZE = 8
     NUM_EPOCHS = 256
     EARLY_STOP_ROUNDS = 30
     N_FOLDS = 5
@@ -280,7 +280,7 @@ if __name__ == '__main__':
     IS_STRATIFIED = True
     MODEL_NAME = 'ResNet50V2_rtx3090'
 
-    MODEL_LR = 0.0003
+    MODEL_LR = 0.00003
     MODEL_LABEL_SMOOTHING = 0
 
     CKPT_DIR = './ckpt/'
