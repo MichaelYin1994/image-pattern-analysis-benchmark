@@ -35,7 +35,7 @@ GLOBAL_RANDOM_SEED = 7555
 # tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
 TASK_NAME = 'iflytek_2021_digital_marketing'
-GPU_ID = 5
+GPU_ID = 0
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -155,7 +155,7 @@ def load_preprocessing_img(image_size, stage):
 
 
 def sample_beta_distribution(size, concentration_0=0.2, concentration_1=0.2):
-    '''Beta分布抽取生成器'''
+    '''从beta分布中抽取指定size的数据'''
     gamma_1_sample = tf.random.gamma(shape=[size], alpha=concentration_1)
     gamma_2_sample = tf.random.gamma(shape=[size], alpha=concentration_0)
     return gamma_1_sample / (gamma_1_sample + gamma_2_sample)
@@ -176,13 +176,85 @@ def mix_up(ds_one, ds_two, alpha=0.2):
     # 进行Mixup
     images = images_one * x_l + images_two * (1 - x_l)
     labels = labels_one * y_l + labels_two * (1 - y_l)
+
     return (images, labels)
+
+
+def get_box(lambda_value, image_size):
+    '''生成切分点与切分坐标'''
+    cut_rate = tf.math.sqrt(1.0 - lambda_value)
+
+    # cutted crop的width和height
+    cut_h = image_size[0] * cut_rate
+    cut_h = tf.cast(cut_h, tf.int32)
+
+    cut_w = image_size[1] * cut_rate
+    cut_w = tf.cast(cut_w, tf.int32)
+
+    # 从均匀分布生成切分crop的中心点坐标
+    center_h = tf.random.uniform((1,), minval=0, maxval=image_size[0], dtype=tf.int32)
+    center_w = tf.random.uniform((1,), minval=0, maxval=image_size[1], dtype=tf.int32)
+
+    # 生成cutted crop上下前后范围坐标
+    start_h = tf.clip_by_value(center_h[0] - cut_h // 2, 0, image_size[0])
+    start_w = tf.clip_by_value(center_w[0] - cut_w // 2, 0, image_size[1])
+    end_h = tf.clip_by_value(center_h[0] + cut_h // 2, 0, image_size[0])
+    end_w = tf.clip_by_value(center_w[0] + cut_w // 2, 0, image_size[1])
+
+    # corner case控制
+    target_h = end_h - start_h
+    if target_h == 0:
+        target_h += 1
+
+    target_w = end_w - start_w
+    if target_w == 0:
+        target_w += 1
+
+    return start_h, start_w, target_h, target_w
+
+
+# https://keras.io/examples/vision/cutmix
+def cut_mix(ds_one, ds_two, image_size, alpha=0.5, beta=0.25):
+    '''对输入2个tf.data.Dataset对象执行cut_mix数据增强'''
+    (image_1, label_1), (image_2, label_2) = ds_one, ds_two
+
+    # 从beta分布抽取lambda值
+    lambda_value = sample_beta_distribution(1, [alpha], [beta])
+    lambda_value = lambda_value[0][0]
+
+    # 获取起始(h, w)坐标
+    start_h, start_w, target_h, target_w = get_box(lambda_value, image_size)
+
+    # 生成image_2的抠图结果，并zero padding到指定size
+    crop_2 = tf.image.crop_to_bounding_box(
+        image_2, start_h, start_w, target_h, target_w
+    )
+    zero_padded_image_2 = tf.image.pad_to_bounding_box(
+        crop_2, start_h, start_w, image_size[0], image_size[1]
+    )
+
+    # 对image_1进行抠图，并补全到指定大小
+    crop_1 = tf.image.crop_to_bounding_box(
+        image_1, start_h, start_w, target_h, target_w
+    )
+    zero_padded_image_1 = tf.image.pad_to_bounding_box(
+        crop_1, start_h, start_w, image_size[0], image_size[1]
+    )
+
+    # 生成cut_mix的结果
+    image_1 = image_1 - zero_padded_image_1
+    image = image_1 + zero_padded_image_2
+
+    # Mixup标签信息
+    label = lambda_value * label_1 + (1 - lambda_value) * label_2
+
+    return (image, label)
 
 
 if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
-    IMAGE_SIZE = (512, 512)
+    IMAGE_SIZE = (128, 128)
     BATCH_SIZE = 10
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 6
@@ -254,7 +326,7 @@ if __name__ == '__main__':
     train_ds_x = tf.data.Dataset.zip((train_img_ds_x, train_label_ds_x))
     train_ds_y = tf.data.Dataset.zip((train_img_ds_y, train_label_ds_y))
 
-    # 构造validation数据集的pipline
+    # 构造validation数据集的pipeline
     # ************
     processor_valid_image = load_preprocessing_img(
         image_size=IMAGE_SIZE, stage='valid')
@@ -266,19 +338,33 @@ if __name__ == '__main__':
     val_label_ds = tf.data.Dataset.from_tensor_slices(y_val)
     val_ds = tf.data.Dataset.zip((val_img_ds, val_label_ds))
 
-    # 数据集性能相关参数
+    # 数据集性能相关参数（采用mixup进行增强）
+    # ************
+    # train_ds_x = train_ds_x.shuffle(
+    #     BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    # train_ds_y = train_ds_y.shuffle(
+    #     BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    # train_ds = tf.data.Dataset.zip((train_ds_x, train_ds_y))
+    # train_ds_mu = train_ds.map(
+    #     lambda ds_one, ds_two: mix_up(ds_one, ds_two, alpha=0.2),
+    #     num_parallel_calls=mp.cpu_count()
+    # )
+
+    # val_ds = val_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+
+    # 数据集性能相关参数（采用cutmix进行增强）
     # ************
     train_ds_x = train_ds_x.shuffle(
-        BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+        BATCH_SIZE * 32).batch(BATCH_SIZE).prefetch(8 * BATCH_SIZE)
     train_ds_y = train_ds_y.shuffle(
-        BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+        BATCH_SIZE * 100).batch(BATCH_SIZE).prefetch(8 * BATCH_SIZE)
     train_ds = tf.data.Dataset.zip((train_ds_x, train_ds_y))
     train_ds_mu = train_ds.map(
-        lambda ds_one, ds_two: mix_up(ds_one, ds_two, alpha=0.2),
+        lambda ds_one, ds_two: cut_mix(ds_one, ds_two, image_size=IMAGE_SIZE),
         num_parallel_calls=mp.cpu_count()
     )
 
-    val_ds = val_ds.batch(BATCH_SIZE).prefetch(2 * BATCH_SIZE)
+    val_ds = val_ds.batch(BATCH_SIZE).prefetch(8 * BATCH_SIZE)
 
     # 随机可视化几张图片
     # ************
@@ -370,7 +456,7 @@ if __name__ == '__main__':
         num_parallel_calls=mp.cpu_count()
     )
     test_ds = test_ds.batch(BATCH_SIZE)
-    test_ds = test_ds.prefetch(buffer_size=int(BATCH_SIZE * 2))
+    test_ds = test_ds.prefetch(buffer_size=int(BATCH_SIZE * 8))
 
     # 进行TTA强化
     test_pred_proba_list = []
