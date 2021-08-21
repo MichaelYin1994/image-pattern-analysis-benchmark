@@ -273,12 +273,8 @@ if __name__ == '__main__':
     IS_RANDOM_VISUALIZING_PLOTS = False
 
     # 数据loading的path
-    if IS_DEBUG:
-        TRAIN_PATH = './data/train_debug/'
-        TEST_PATH = './data/test_debug/'
-    else:
-        TRAIN_PATH = './data/train/'
-        TEST_PATH = './data/test/'
+    TRAIN_PATH = './data/train/'
+    TEST_PATH = './data/test/'
     N_CLASSES = len(os.listdir(TRAIN_PATH))
 
     # 利用tensorflow的preprocessing方法读取数据集
