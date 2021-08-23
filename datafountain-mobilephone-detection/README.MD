@@ -3,7 +3,7 @@
 ---
 ### **队伍简介**
 
-队名：GradientBoostingTeam，队长：鱼丸粗面，邮箱：zhuoyin94@163.com。20210614
+队名：GradientBoostingTeam，队长：鱼丸粗面，邮箱：zhuoyin94@163.com。20210823
 
 ---
 ### **源码说明**
