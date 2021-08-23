@@ -27,13 +27,13 @@ from tensorflow.keras.optimizers import Adam
 from tqdm import tqdm
 
 from dingtalk_remote_monitor import RemoteMonitorDingTalk
-from utils import LearningRateWarmUpCosineDecayScheduler, LoadSave
+from utils import LearningRateWarmUpCosineDecayScheduler, LoadSave, custom_eval_metric
 
 GLOBAL_RANDOM_SEED = 7555
-np.random.seed(GLOBAL_RANDOM_SEED)
-tf.random.set_seed(GLOBAL_RANDOM_SEED)
+# np.random.seed(GLOBAL_RANDOM_SEED)
+# tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
-TASK_NAME = 'datafountain_2021_mobilepthon_detection'
+TASK_NAME = 'datafountain_2021_mobilephone_detection'
 GPU_ID = 0
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -51,6 +51,9 @@ if gpus:
         print(e)
 
 # ----------------------------------------------------------------------------
+def tf_f1_score(y_true, y_pred):
+    return tf.py_function(custom_eval_metric, (y_true, y_pred, 0.5), tf.double)
+
 
 def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     '''构造基于imagenet预训练的ResNetV2的模型，并返回编译过的模型。'''
@@ -111,7 +114,7 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
             loss=tf.keras.losses.CategoricalCrossentropy(
                 label_smoothing=model_label_smoothing),
             optimizer=Adam(model_lr),
-            metrics=['acc'])
+            metrics=[tf_f1_score])
 
     return model
 
@@ -155,7 +158,7 @@ if __name__ == '__main__':
     # ---------------------
     IMAGE_SIZE = (512, 512)
     BATCH_SIZE = 10
-    NUM_EPOCHS = 0
+    NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 7
     MODEL_NAME = 'EfficentNetB0_rtx3090'
 
@@ -166,7 +169,7 @@ if __name__ == '__main__':
     CKPT_FOLD_NAME = '{}_GPU_{}_{}'.format(TASK_NAME, GPU_ID, MODEL_NAME)
 
     IS_TRAIN_FROM_CKPT = False
-    IS_SEND_MSG_TO_DINGTALK = False
+    IS_SEND_MSG_TO_DINGTALK = True
     IS_DEBUG = False
     IS_RANDOM_VISUALIZING_PLOTS = False
 
@@ -213,7 +216,6 @@ if __name__ == '__main__':
         train_file_full_name_list, train_label_oht_array,
         train_size=0.8, random_state=GLOBAL_RANDOM_SEED,
     )
-
     n_train_samples, n_valid_samples = len(X_train), len(X_val)
 
     # 构造训练数据集的pipeline
@@ -244,8 +246,8 @@ if __name__ == '__main__':
 
     # 数据集性能相关参数
     # ************
-    train_ds = train_ds.batch(BATCH_SIZE).prefetch(8 * BATCH_SIZE)
-    val_ds = val_ds.batch(BATCH_SIZE).prefetch(8 * BATCH_SIZE)
+    train_ds = train_ds.batch(BATCH_SIZE).prefetch(32 * BATCH_SIZE)
+    val_ds = val_ds.batch(BATCH_SIZE).prefetch(32 * BATCH_SIZE)
 
     # 随机可视化几张图片
     # ************
@@ -263,22 +265,21 @@ if __name__ == '__main__':
     # ---------------------
 
     # 各种Callbacks
-    # ************
     callbacks = [
         tf.keras.callbacks.EarlyStopping(
-            monitor='val_acc', mode="max",
+            monitor='val_tf_f1_score', mode="max",
             verbose=1, patience=EARLY_STOP_ROUNDS,
             restore_best_weights=True),
         tf.keras.callbacks.ModelCheckpoint(
             filepath=os.path.join(
                 CKPT_DIR + CKPT_FOLD_NAME,
-                MODEL_NAME + '_epoch_{epoch:02d}_valacc_{val_acc:.3f}.ckpt'),
-            monitor='val_acc',
+                MODEL_NAME + '_latest.ckpt'),
+            monitor='val_tf_f1_score',
             mode='max',
             save_weights_only=True,
             save_best_only=True),
         tf.keras.callbacks.ReduceLROnPlateau(
-                monitor='val_acc',
+                monitor='val_tf_f1_score',
                 factor=0.7,
                 patience=3,
                 min_lr=0.000003),
@@ -336,7 +337,7 @@ if __name__ == '__main__':
         num_parallel_calls=mp.cpu_count()
     )
     test_ds = test_ds.batch(BATCH_SIZE)
-    test_ds = test_ds.prefetch(buffer_size=int(BATCH_SIZE * 8))
+    test_ds = test_ds.prefetch(buffer_size=int(BATCH_SIZE * 32))
 
     # 生成预测概率
     test_pred_proba = model.predict(test_ds)

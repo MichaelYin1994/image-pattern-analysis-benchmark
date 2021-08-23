@@ -24,14 +24,15 @@ from tensorflow.keras.optimizers import Adam
 from tqdm import tqdm
 
 from dingtalk_remote_monitor import RemoteMonitorDingTalk
-from utils import LearningRateWarmUpCosineDecayScheduler, LoadSave
+
+from utils import LearningRateWarmUpCosineDecayScheduler, LoadSave, custom_eval_metric
 
 GLOBAL_RANDOM_SEED = 7555
 # np.random.seed(GLOBAL_RANDOM_SEED)
 # tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
-TASK_NAME = 'iflytek_2021_digital_marketing'
-GPU_ID = 0
+TASK_NAME = 'datafountain_2021_mobilephone_detection'
+GPU_ID = 1
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -48,6 +49,9 @@ if gpus:
         print(e)
 
 # ----------------------------------------------------------------------------
+def tf_f1_score(y_true, y_pred):
+    return tf.py_function(custom_eval_metric, (y_true, y_pred, 0.5), tf.double)
+
 
 def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     '''构造基于imagenet预训练的ResNetV2的模型，并返回编译过的模型。'''
@@ -108,7 +112,7 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
             loss=tf.keras.losses.CategoricalCrossentropy(
                 label_smoothing=model_label_smoothing),
             optimizer=Adam(model_lr),
-            metrics=['acc'])
+            metrics=[tf_f1_score])
 
     return model
 
@@ -118,7 +122,7 @@ def load_preprocessing_img(image_size, stage):
     if stage not in ['train', 'valid', 'test']:
         raise ValueError('stage must be either train, valid or test !')
 
-    if stage is 'train' or stage is 'test':
+    if stage == 'train' or stage == 'test':
         def load_img(path=None):
             image = tf.io.read_file(path)
             image = tf.cond(
@@ -131,8 +135,8 @@ def load_preprocessing_img(image_size, stage):
             image = tf.image.random_contrast(image, lower=0.5, upper=1.5)
             image = tf.image.random_brightness(image, 0.3)
 
-            # image = tf.image.random_flip_left_right(image)
-            # image = tf.image.random_flip_up_down(image)
+            image = tf.image.random_flip_left_right(image)
+            image = tf.image.random_flip_up_down(image)
 
             image = tf.image.resize(image, image_size)
             return image
@@ -251,7 +255,7 @@ if __name__ == '__main__':
     # 全局化的参数列表
     # ---------------------
     IMAGE_SIZE = (512, 512)
-    BATCH_SIZE = 10
+    BATCH_SIZE = 8
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 6
     TTA_ROUNDS = 25
@@ -391,19 +395,19 @@ if __name__ == '__main__':
     # 各种Callbacks
     callbacks = [
         tf.keras.callbacks.EarlyStopping(
-            monitor='val_acc', mode="max",
+            monitor='val_tf_f1_score', mode="max",
             verbose=1, patience=EARLY_STOP_ROUNDS,
             restore_best_weights=True),
         tf.keras.callbacks.ModelCheckpoint(
             filepath=os.path.join(
                 CKPT_DIR + CKPT_FOLD_NAME,
-                MODEL_NAME + '_epoch_{epoch:02d}_valacc_{val_acc:.3f}.ckpt'),
-            monitor='val_acc',
+                MODEL_NAME + '_latest.ckpt'),
+            monitor='val_tf_f1_score',
             mode='max',
             save_weights_only=True,
             save_best_only=True),
         tf.keras.callbacks.ReduceLROnPlateau(
-                monitor='val_acc',
+                monitor='val_tf_f1_score',
                 factor=0.7,
                 patience=3,
                 min_lr=0.000003),

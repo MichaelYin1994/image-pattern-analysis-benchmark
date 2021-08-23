@@ -18,6 +18,76 @@ from tensorflow import keras
 from tensorflow.keras import backend as K
 
 
+def custom_eval_metric(y_true, y_pred_proba, threshold=0.5):
+    '''官方定义的评估用的Metric'''
+
+    # 0 - Phone F1
+    # -----------
+    y_true_phone = y_true[:, 0]
+    y_pred_phone = np.where(y_pred_proba[:, 0] >= threshold, 1, 0)
+
+    # https://www.itread01.com/content/1544007604.html
+    tp = np.sum(np.logical_and(np.equal(y_true_phone, 1),
+                               np.equal(y_pred_phone, 1)))
+    fp = np.sum(np.logical_and(np.equal(y_true_phone, 0),
+                               np.equal(y_pred_phone, 1)))
+    # tn = np.sum(np.logical_and(np.equal(y_true, 1),
+    #                            np.equal(y_pred_label, 0)))
+    fn = np.sum(np.logical_and(np.equal(y_true_phone, 1),
+                               np.equal(y_pred_phone, 0)))
+
+    if (tp + fp) == 0:
+        precision = 0
+    else:
+        precision = tp / (tp + fp)
+
+    if (tp + fn) == 0:
+        recall = 0
+    else:
+        recall = tp / (tp + fn)
+
+    if (precision + recall) == 0:
+        f1_phone = 0
+    else:
+        f1_phone = 2 * precision * recall / (precision + recall)
+
+    # 1 - No Phone F1
+    # -----------
+    y_true_no_phone = y_true[:, 1]
+    y_pred_no_phone = np.where(y_pred_proba[:, 1] > threshold, 1, 0)
+
+    # https://www.itread01.com/content/1544007604.html
+    tp = np.sum(np.logical_and(np.equal(y_true_no_phone, 1),
+                               np.equal(y_pred_no_phone, 1)))
+    fp = np.sum(np.logical_and(np.equal(y_true_no_phone, 0),
+                               np.equal(y_pred_no_phone, 1)))
+    # tn = np.sum(np.logical_and(np.equal(y_true, 1),
+    #                            np.equal(y_pred_label, 0)))
+    fn = np.sum(np.logical_and(np.equal(y_true_no_phone, 1),
+                               np.equal(y_pred_no_phone, 0)))
+
+    if (tp + fp) == 0:
+        precision = 0
+    else:
+        precision = tp / (tp + fp)
+
+    if (tp + fn) == 0:
+        recall = 0
+    else:
+        recall = tp / (tp + fn)
+
+    if (precision + recall) == 0:
+        f1_no_phone = 0
+    else:
+        f1_no_phone = 2 * precision * recall / (precision + recall)
+
+    # Blending
+    # -----------
+    f1_score = 0.6 * f1_phone + 0.4 * f1_no_phone
+
+    return f1_score
+
+
 class LoadSave():
     '''以*.pkl格式，利用pickle包存储各种形式（*.npz, list etc.）的数据。
     @Attributes:
