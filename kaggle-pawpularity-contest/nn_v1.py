@@ -33,12 +33,14 @@ from tensorflow.python.keras.backend import dtype
 from tensorflow.python.ops.gen_batch_ops import batch
 from tqdm import tqdm
 
+import xgboost as xgb
+
 GLOBAL_RANDOM_SEED = 7555
 # np.random.seed(GLOBAL_RANDOM_SEED)
 # tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
 TASK_NAME = 'kaggle_pawpularity_contest'
-GPU_ID = 0
+GPU_ID = 1
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
@@ -94,7 +96,6 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     # 解析preprocessing与model的参数
     # *******************
     input_img_shape = kwargs.pop('input_img_shape', (None, 224, 224))
-    input_dense_shape = kwargs.pop('input_dense_shape', (None, 12))
 
     model_name = kwargs.pop('model_name', 'EfficentNetB0')
     model_lr = kwargs.pop('model_lr', 0.01)
@@ -129,21 +130,9 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     layer_img_embedding_output = tf.keras.layers.GlobalAveragePooling2D()(layer_img_embedding_output)
     layer_img_embedding_output = tf.keras.layers.Flatten()(layer_img_embedding_output)
 
-    layer_input_feats = tf.keras.layers.Input(
-        shape=input_dense_shape, dtype=tf.float32
-    )
-    layer_dense_feats = tf.keras.layers.Dense(
-        32, activation='relu',
-    )(layer_input_feats)
-    layer_dense_feats = tf.keras.layers.Dropout(0.4)(layer_dense_feats)
-
     # Dense layer
     # ----------
-    layer_total = tf.keras.layers.concatenate(
-        [layer_dense_feats, layer_img_embedding_output]
-    )
-
-    layer_total = tf.keras.layers.Dense(256, activation='relu')(layer_total)
+    layer_total = tf.keras.layers.Dense(256, activation='relu')(layer_img_embedding_output)
     layer_total = tf.keras.layers.Dropout(0.4)(layer_total)
     layer_total = tf.keras.layers.BatchNormalization()(layer_total)
 
@@ -151,7 +140,7 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
         units=1, activation='linear', name='layer_pawpularity_score'
     )(layer_total)
     model = tf.keras.models.Model(
-        [model_img_embedding.input, layer_input_feats], layer_pred
+        [model_img_embedding.input], layer_pred
     )
 
     # 模型训练参数
@@ -270,13 +259,13 @@ if __name__ == '__main__':
     # 预处理/后处理相关参数
     # ----------
     N_FOLDS = 5
-    IMAGE_SIZE = (256, 256)
-    BATCH_SIZE = 64
+    IMAGE_SIZE = (768, 768)
+    BATCH_SIZE = 32
     NUM_EPOCHS = 128
     EARLY_STOP_ROUNDS = 6
     TTA_ROUNDS = 5
 
-    MODEL_NAME = 'EfficentNetB0_dataaug_rtx3090'
+    MODEL_NAME = 'EfficentNetB5_dataaug_rtx3090'
     MODEL_LR = 0.0003
     MODEL_LR_DECAY_RATE = 0.7
     DECAY_LR_PATIENCE_ROUNDS = 5
@@ -336,7 +325,7 @@ if __name__ == '__main__':
         np.arange(0, len(train_df)), train_target
     )
 
-    # 各种Callback函数
+    # 各种Callback函数与XGBoost参数
     # ----------
     callbacks = [
         tf.keras.callbacks.EarlyStopping(
