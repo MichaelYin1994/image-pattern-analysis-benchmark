@@ -10,8 +10,12 @@ iflytek-digital-marketing/ckpt/*
 iflytek-promote-shooting/ckpt/*
 iflytek-image-retrieval/ckpt/*
 iflytek-human-face-emotion/ckpt/*
+datafountain-mobilephone-detection/ckpt/*
+kaggle-pawpularity-contest/kaggle/*
 
 iflytek-digital-marketing/__pycache__/*
+datafountain-mobilephone-detection/__pycache__/*
+kaggle-pawpularity-contest/__pycache__/*
 
 *.csv
 *.tsv
@@ -20,7 +24,9 @@ iflytek-digital-marketing/__pycache__/*
 *.zip
 *.npz
 *.html
+*.db
 
+*.xml
 *.pyc
 *.txt
 
