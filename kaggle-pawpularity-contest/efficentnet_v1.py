@@ -39,7 +39,7 @@ GLOBAL_RANDOM_SEED = 7555
 # np.random.seed(GLOBAL_RANDOM_SEED)
 # tf.random.set_seed(GLOBAL_RANDOM_SEED)
 
-TASK_NAME = 'kaggle_pawpularity_contest'
+TASK_NAME = 'kaggle-pawpularity-contest'
 GPU_ID = 1
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -122,23 +122,16 @@ def build_efficentnet_model(verbose=False, is_compile=True, **kwargs):
     model_img_embedding = model_tmp(
         input_shape=input_img_shape,
         include_top=False,
-        weights='imagenet',
+        weights=None,
         drop_connect_rate=0.4,
     )
     layer_img_embedding_output = model_img_embedding.output
 
     layer_img_embedding_output = tf.keras.layers.GlobalAveragePooling2D()(layer_img_embedding_output)
-    layer_img_embedding_output = tf.keras.layers.Flatten()(layer_img_embedding_output)
+    layer_pred = tf.keras.layers.Flatten()(layer_img_embedding_output)
 
     # Dense layer
     # ----------
-    layer_total = tf.keras.layers.Dense(256, activation='relu')(layer_img_embedding_output)
-    layer_total = tf.keras.layers.Dropout(0.4)(layer_total)
-    layer_total = tf.keras.layers.BatchNormalization()(layer_total)
-
-    layer_pred = tf.keras.layers.Dense(
-        units=1, activation='linear', name='layer_pawpularity_score'
-    )(layer_total)
     model = tf.keras.models.Model(
         [model_img_embedding.input], layer_pred
     )
@@ -195,7 +188,7 @@ def load_preprocessing_img(image_size, stage):
     return load_img
 
 
-def create_tf_dataset(img_path_list, dense_feats_list, map_fcn, label_list=None):
+def create_tf_dataset(img_path_list, map_fcn, target_list=None):
     '''生成数据pipeline对象，并构建性能参数'''
 
     # 组装数据集对象
@@ -203,25 +196,19 @@ def create_tf_dataset(img_path_list, dense_feats_list, map_fcn, label_list=None)
     img_path_ds = tf.data.Dataset.from_tensor_slices(
         img_path_list
     )
-    dense_feats_ds = tf.data.Dataset.from_tensor_slices(
-        dense_feats_list
-    )
     img_ds = img_path_ds.map(
         map_fcn, num_parallel_calls=mp.cpu_count()
     )
-    concat_ds = tf.data.Dataset.zip(
-        (img_ds, dense_feats_ds)
-    )
 
-    if label_list != None:
-        label_ds = tf.data.Dataset.from_tensor_slices(
-            label_list
+    if target_list:
+        target_ds = tf.data.Dataset.from_tensor_slices(
+            target_list
         )
-        concat_ds = tf.data.Dataset.zip(
-            (concat_ds, label_ds)
+        img_ds = tf.data.Dataset.zip(
+            (img_ds, target_ds)
         )
 
-    return concat_ds
+    return img_ds
 
 
 def set_tf_dataset_performance(
@@ -259,10 +246,10 @@ if __name__ == '__main__':
     # 预处理/后处理相关参数
     # ----------
     N_FOLDS = 5
-    IMAGE_SIZE = (768, 768)
-    BATCH_SIZE = 32
+    IMAGE_SIZE = (256, 256)
+    BATCH_SIZE = 5
     NUM_EPOCHS = 128
-    EARLY_STOP_ROUNDS = 6
+    EARLY_STOP_ROUNDS = 400
     TTA_ROUNDS = 5
 
     MODEL_NAME = 'EfficentNetB5_dataaug_rtx3090'
@@ -327,31 +314,26 @@ if __name__ == '__main__':
 
     # 各种Callback函数与XGBoost参数
     # ----------
-    callbacks = [
-        tf.keras.callbacks.EarlyStopping(
-            monitor='val_loss', mode="min",
-            verbose=1, patience=EARLY_STOP_ROUNDS,
-            restore_best_weights=True),
-        tf.keras.callbacks.ReduceLROnPlateau(
-                monitor='val_loss',
-                factor=MODEL_LR_DECAY_RATE,
-                patience=DECAY_LR_PATIENCE_ROUNDS,
-                min_lr=0.000003),
-    ]
+    xgb_params = {
+        'n_estimators': 10000,
+        'max_depth': 5,
+        'learning_rate': 0.1,
+        'verbosity': 0,
+        'objective': 'reg:squarederror',
+        'booster': 'gbtree',
+        'colsample_bytree': 0.95,
+        'colsample_bylevel': 0.95,
+        'subsample': 0.95,
+        'random_state': GLOBAL_RANDOM_SEED,
+    }
 
     # 原始数据处理
     # ----------
     train_path_list = train_df['Id'].values.tolist()
-    train_dense_list = train_df.drop(['Id'], axis=1).values.tolist()
-    train_dense_array_list = [
-        np.array(item, dtype=np.float32) for item in train_dense_list
-    ]
+    train_dense_feats = train_df.drop(['Id'], axis=1).values
 
     test_path_list = test_df['Id'].values.tolist()
-    test_dense_list = test_df.drop(['Id'], axis=1).values.tolist()
-    test_dense_array_list = [
-        np.array(item, dtype=np.float32).reshape(1, -1) for item in test_dense_list
-    ]
+    test_dense_ds = test_df.drop(['Id'], axis=1).values
 
     # 交叉验证相关参数
     # ----------
@@ -362,17 +344,16 @@ if __name__ == '__main__':
     # 数据pipeline loading方法
     # ----------
     load_preprocess_train_image = load_preprocessing_img(
-        image_size=IMAGE_SIZE, stage='train')
+        image_size=IMAGE_SIZE, stage='valid')
     load_preprocess_valid_image = load_preprocessing_img(
         image_size=IMAGE_SIZE, stage='valid')
     load_preprocess_test_image = load_preprocessing_img(
-        image_size=IMAGE_SIZE, stage='test')
+        image_size=IMAGE_SIZE, stage='valid')
 
     # 测试数据Loading pipeline
     # ----------
     test_ds = create_tf_dataset(
         img_path_list=test_path_list,
-        dense_feats_list=test_dense_list,
         map_fcn=load_preprocess_test_image
     )
     test_ds = set_tf_dataset_performance(
@@ -390,24 +371,16 @@ if __name__ == '__main__':
     )
     print('==================================')
     for fold, (train_idx, valid_idx) in enumerate(fold_generator):
-        # 清空内存结构中的图
-        # ----------
-        K.clear_session()
-        gc.collect()
 
         # 构造数据的pipeline
         # ----------
         train_path_ds = [
             train_path_list[i] for i in train_idx
         ]
-        train_dense_ds = [
-            train_dense_array_list[i] for i in train_idx
-        ]
-        train_label_ds = [train_target[i] for i in train_idx]
+        train_dense_ds = train_dense_feats[train_idx]
+        train_target_ds = np.array([train_target[i] for i in train_idx])
         train_ds = create_tf_dataset(
             img_path_list=train_path_ds,
-            dense_feats_list=train_dense_ds,
-            label_list=train_label_ds,
             map_fcn=load_preprocess_train_image
         )
         train_ds = set_tf_dataset_performance(
@@ -419,14 +392,10 @@ if __name__ == '__main__':
         valid_path_ds = [
             train_path_list[i] for i in valid_idx
         ]
-        valid_dense_ds = [
-            train_dense_array_list[i] for i in valid_idx
-        ]
-        valid_label_ds = [train_target[i] for i in valid_idx]
+        valid_dense_ds = train_dense_feats[valid_idx]
+        valid_target_ds = np.array([train_target[i] for i in valid_idx])
         valid_ds = create_tf_dataset(
             img_path_list=valid_path_ds,
-            dense_feats_list=valid_dense_ds,
-            label_list=valid_label_ds,
             map_fcn=load_preprocess_valid_image
         )
         valid_ds = set_tf_dataset_performance(
@@ -437,9 +406,8 @@ if __name__ == '__main__':
 
         # 构造模型
         # ----------
-        model = build_efficentnet_model(
+        nn_model = build_efficentnet_model(
             input_img_shape=IMAGE_SIZE + (3, ),
-            input_dense_shape=(12, ),
             network_type=MODEL_NAME,
             model_name=MODEL_NAME,
             model_lr=MODEL_LR,
@@ -447,39 +415,56 @@ if __name__ == '__main__':
 
         # 训练模型
         # ----------
-        history = model.fit(
-            train_ds,
-            epochs=NUM_EPOCHS,
-            validation_data=valid_ds,
-            callbacks=callbacks
+        train_img_feats = nn_model.predict(train_ds)
+        valid_img_feats = nn_model.predict(valid_ds)
+        test_img_feats = nn_model.predict(test_ds)
+
+        train_total_ds = np.hstack([train_img_feats, train_dense_ds])
+        valid_total_ds = np.hstack([valid_img_feats, valid_dense_ds])
+        test_total_ds = np.hstack([test_img_feats, test_dense_ds])
+
+        # 清空内存结构中的图
+        # ----------
+        K.clear_session()
+        gc.collect()
+
+        xgb_model = xgb.XGBRegressor(**xgb_params)
+        xgb_model.fit(
+            train_total_ds, train_target_ds,
+            eval_set=[(valid_total_ds, valid_target_ds)],
+            early_stopping_rounds=EARLY_STOP_ROUNDS,
+            eval_metric='rmse',
+            verbose=0
         )
 
         # 保存预测结果
         # ----------
         test_pred_result_list.append(
-            model.predict(test_ds).ravel().clip(1, 100)
+            xgb_model.predict(test_total_ds, ntree_limit=xgb_model.best_iteration).ravel().clip(1, 100)
         )
-        val_pred_result = model.predict(valid_ds).ravel().clip(1, 100)
+        val_pred_result = xgb_model.predict(
+            valid_total_ds, ntree_limit=xgb_model.best_iteration
+        ).ravel().clip(1, 100)
         valid_pred_result_df[valid_idx] = val_pred_result
 
-        valid_mse = mean_squared_error(
-            valid_label_ds.reshape(-1, 1), val_pred_result.reshape(-1, 1)
-        )
+        val_rmse = np.sqrt(mean_squared_error(
+            valid_target_ds.reshape(-1, 1), val_pred_result.reshape(-1, 1)
+        ))
         val_mae = mean_absolute_error(
-            valid_label_ds.reshape(-1, 1), val_pred_result.reshape(-1, 1)
+            valid_target_ds.reshape(-1, 1), val_pred_result.reshape(-1, 1)
         )
         val_mape = mean_absolute_percentage_error(
-            valid_label_ds.reshape(-1, 1), val_pred_result.reshape(-1, 1)
+            valid_target_ds.reshape(-1, 1), val_pred_result.reshape(-1, 1)
         )
 
         valid_score_df[fold, 0] = fold
-        valid_score_df[fold, 1] = valid_mse
+        valid_score_df[fold, 1] = val_rmse
         valid_score_df[fold, 2] = val_mae
         valid_score_df[fold, 3] = val_mape
 
         # 发送预测结果
         # ----------
-        INFO_TEXT = '-- [INFO][{}] {} folds {}({}), valid mse: {:.5f}, mae {:5f}, mape: {:.5f}'.format(
+        INFO_TEXT = '-- [INFO][{}] {} folds {}({}), valid rmse: {:.5f}, mae {:5f}, mape: {:.5f}'.format(
             MODEL_NAME, str(datetime.now())[:-4], fold+1, N_FOLDS,
             valid_score_df[fold, 1],
             valid_score_df[fold, 2],
@@ -495,9 +480,9 @@ if __name__ == '__main__':
 
     # Out of fold预测结果评估
     # ----------
-    valid_mse = mean_squared_error(
+    val_rmse = np.sqrt(mean_squared_error(
         train_target.reshape(-1, 1), valid_pred_result_df.reshape(-1, 1)
-    )
+    ))
     val_mae = mean_absolute_error(
         train_target.reshape(-1, 1), valid_pred_result_df.reshape(-1, 1)
     )
@@ -505,10 +490,42 @@ if __name__ == '__main__':
         train_target.reshape(-1, 1), valid_pred_result_df.reshape(-1, 1)
     )
 
-    INFO_TEXT = '-- [INFO][{}] {} TOTAL OOF valid mse: {:.5f}, mae {:5f}, mape: {:.5f}'.format(
+    INFO_TEXT = '-- [INFO][{}] {} TOTAL OOF valid rmse: {:.5f}, mae {:5f}, mape: {:.5f}'.format(
         MODEL_NAME, str(datetime.now())[:-4],
-        valid_mse, val_mae, val_mape,
+        val_rmse, val_mae, val_mape,
     )
     send_msg_to_dingtalk(
         INFO_TEXT, IS_SEND_MSG_TO_DINGTALK
+    )
+
+    # 训练日志保存
+    # ----------
+    valid_score_df = pd.DataFrame(
+        valid_score_df, columns=['fold', 'rmse', 'mae', 'mape']
+    )
+
+    if 'logs' in os.listdir(CACHE_DIR):
+        log_path = os.path.join(CACHE_DIR, 'logs')
+
+        FILE_NAME = '{}_valrmse_{}_mape_{}'.format(
+            len(os.listdir(log_path)) + 1,
+            str(np.round(val_rmse, 4)),
+            str(np.round(val_mape, 4)).split('.')[1],
+        )
+        valid_score_df.to_csv(
+            os.path.join(log_path, FILE_NAME + '.csv'), index=False
+        )
+
+    # 训练结果保存
+    # ----------
+    test_pred_result = np.mean(test_pred_result_list, axis=0)
+
+    test_df = pd.read_csv(TEST_META_FILE_NAME)
+    test_pred_df = pd.DataFrame(None)
+
+    test_pred_df['Id'] = test_df['Id']
+    test_pred_df['Pawpularity'] = test_pred_result
+
+    test_pred_df.to_csv(
+        'submission.csv', index=False
     )
